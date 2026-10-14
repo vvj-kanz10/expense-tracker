@@ -2,18 +2,22 @@ package com.expensetracker.backend.controller;
 
 import com.expensetracker.backend.dto.TransactionRequest;
 import com.expensetracker.backend.dto.TransactionResponse;
+import com.expensetracker.backend.dto.UploadResult;
 import com.expensetracker.backend.service.TransactionService;
 import com.expensetracker.backend.statement.CsvParserService;
 import com.expensetracker.backend.statement.ParsedTransaction;
 import com.expensetracker.backend.statement.PdfParserService;
+import com.expensetracker.backend.statement.PdfPasswordException;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/transactions")
@@ -78,6 +82,7 @@ public class TransactionController {
 
     @PostMapping("/upload")
     public ResponseEntity<?> uploadStatement(@RequestParam("file") MultipartFile file,
+                                             @RequestParam(value = "password", required = false) String password,
                                              Authentication authentication) {
         try {
             String username = authentication.getName();
@@ -90,18 +95,23 @@ public class TransactionController {
                 parsed = csvParserService.parseTransactions(file);
                 source = "CSV";
             } else if (filename != null && filename.toLowerCase().endsWith(".pdf")) {
-                parsed = pdfParserService.parseTransactions(file);
+                parsed = pdfParserService.parseTransactions(file, password);
                 source = "PDF";
             } else {
                 return ResponseEntity.badRequest()
                         .body("Unsupported file type. Please upload a CSV or PDF.");
             }
 
-            List<TransactionResponse> saved =
+            UploadResult result =
                     transactionService.saveParsedTransactions(username, parsed, source);
 
-            return ResponseEntity.ok(saved);
+            return ResponseEntity.ok(result);
 
+        } catch (PdfPasswordException e) {
+            // Locked PDF: tell the frontend whether the password is missing or wrong
+            String code = e.isWrongPassword() ? "PDF_PASSWORD_WRONG" : "PDF_PASSWORD_REQUIRED";
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(Map.of("code", code, "message", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.badRequest()
                     .body("Failed to process file: " + e.getMessage());

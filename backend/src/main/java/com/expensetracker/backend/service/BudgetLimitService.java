@@ -38,4 +38,16 @@ public class BudgetLimitService {
     public List<BudgetLimit> getLimits(User user) {
         return budgetLimitRepository.findByUser(user);
     }
+
+    // Delete a budget limit by ID with user ownership validation
+    public void deleteLimit(User user, Long id) {
+        BudgetLimit limit = budgetLimitRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Budget limit not found"));
+
+        if (!limit.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("Unauthorized to delete this budget limit");
+        }
+
+        budgetLimitRepository.delete(limit);
+    }
 }

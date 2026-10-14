@@ -13,6 +13,7 @@ const CATEGORIES = [
   'Health & Fitness',
   'Rent/Housing',
   'Income',
+  'Withdrawal',
   'Other/People',
 ];
 

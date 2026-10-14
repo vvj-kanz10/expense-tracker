@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Suppress linter warnings for Tailwind v4 custom at-rules */
+/* stylelint-disable */
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
@@ -27,4 +30,18 @@ body {
   color: var(--color-text);
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
   transition: background 0.2s ease, color 0.2s ease;
+}
+
+/* Smooth Entrance Animation (Opacity-only to prevent breaking fixed modals) */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
 }

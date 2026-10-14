@@ -1,7 +1,8 @@
 package com.expensetracker.backend.controller;
 
-import com.expensetracker.backend.statement.SavingsInsightService;
+import com.expensetracker.backend.service.SavingsInsightService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -14,10 +15,17 @@ public class SavingsInsightController {
     @Autowired
     private SavingsInsightService savingsInsightService;
 
-    // Body: whatever stats map the frontend has already calculated
-    // e.g. { "totalSpent": 22368, "topCategory": "Rent/Housing", "biggestTransaction": ..., "spikes": [...] }
+    // Generates tips (or returns the saved ones if the numbers are unchanged)
     @PostMapping("/savings")
-    public List<String> getSavingsSuggestions(@RequestBody Map<String, Object> stats) throws Exception {
-        return savingsInsightService.getSavingsSuggestions(stats);
+    public List<String> getSavingsSuggestions(@RequestBody Map<String, Object> stats,
+                                              Authentication authentication) throws Exception {
+        return savingsInsightService.getSavingsSuggestions(authentication.getName(), stats);
+    }
+
+    // Only checks for saved tips. Never calls Gemini.
+    @PostMapping("/savings/cached")
+    public List<String> getCachedSavingsSuggestions(@RequestBody Map<String, Object> stats,
+                                                    Authentication authentication) {
+        return savingsInsightService.getCachedSuggestions(authentication.getName(), stats);
     }
 }

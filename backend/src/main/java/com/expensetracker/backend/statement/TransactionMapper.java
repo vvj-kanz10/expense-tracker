@@ -12,6 +12,7 @@ public class TransactionMapper {
         transaction.setTransactionDate(parsed.date());
         transaction.setDescription(parsed.description());
         transaction.setAmount(parsed.amount());
+        transaction.setBalance(parsed.balance());
         transaction.setSource(source);
 
         transaction.setType(parsed.type().equalsIgnoreCase("DEBIT") ? "EXPENSE" : "INCOME");

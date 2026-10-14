@@ -5,6 +5,7 @@ import com.expensetracker.backend.model.User;
 import com.expensetracker.backend.repository.UserRepository;
 import com.expensetracker.backend.service.BudgetLimitService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -42,5 +43,15 @@ public class BudgetLimitController {
         BigDecimal amount = new BigDecimal(body.get("amount").toString());
 
         return budgetLimitService.setLimit(user, category, amount);
+    }
+
+    // DELETE a specific budget limit by its ID
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteLimit(@PathVariable Long id, Authentication authentication) {
+        User user = userRepository.findByUsername(authentication.getName())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        budgetLimitService.deleteLimit(user, id);
+        return ResponseEntity.ok(Map.of("message", "Budget limit deleted successfully"));
     }
 }

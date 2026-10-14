@@ -23,6 +23,7 @@ public class Transaction {
     private String category;      // e.g. "Food", "Travel" — AI-suggested, user-editable
     private String type;          // "INCOME" or "EXPENSE"
     private String source;        // "MANUAL", "CSV", "PDF"
+    private BigDecimal balance;   // running balance after this transaction (null for manual / older rows)
 
     // Getters and Setters
     public Long getId() { return id; }
@@ -51,4 +52,7 @@ public class Transaction {
 
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
+
+    public BigDecimal getBalance() { return balance; }
+    public void setBalance(BigDecimal balance) { this.balance = balance; }
 }

@@ -5,15 +5,23 @@ export const getTransactions = async () => {
   return response.data;
 };
 
-export const uploadStatement = (file, onUploadProgress) => {
+export const uploadStatement = (file, onUploadProgress, password = null) => {
   const formData = new FormData();
   formData.append("file", file);
+
+  if (password !== null) {
+    formData.append("password", password);
+  }
 
   return axiosInstance.post("/transactions/upload", formData, {
     headers: { "Content-Type": "multipart/form-data" },
     onUploadProgress: (progressEvent) => {
-      const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-      onUploadProgress?.(percent);
+      if (progressEvent.total) {
+        const percent = Math.round(
+          (progressEvent.loaded * 100) / progressEvent.total
+        );
+        onUploadProgress?.(percent);
+      }
     },
   });
 };

@@ -30,7 +30,7 @@ public class GeminiCategorizationService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String GEMINI_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent";
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent";
 
     private static final int MAX_ATTEMPTS = 3;
     private static final long INITIAL_BACKOFF_MS = 1000; // 1s, then 2s
@@ -49,6 +49,11 @@ public class GeminiCategorizationService {
                 lastError = e;
                 System.err.println("Gemini attempt " + attempt + "/" + MAX_ATTEMPTS + " failed: " + e);
                 e.printStackTrace(); // TEMP: remove once we've confirmed the real cause
+
+                if (String.valueOf(e.getMessage()).contains(" 429 ")) {
+                    break; // quota used up, retrying only wastes more of it
+                }
+
                 if (attempt < MAX_ATTEMPTS) {
                     long backoff = INITIAL_BACKOFF_MS * (1L << (attempt - 1)); // 1s, 2s
                     try {
@@ -71,7 +76,8 @@ public class GeminiCategorizationService {
         prompt.append("For each transaction description below, do two things: ");
         prompt.append("1) Classify it into exactly one of these categories: ");
         prompt.append("Food & Dining, Groceries, Transport, Shopping, Bills & Utilities, Entertainment, ");
-        prompt.append("Health & Fitness, Rent/Housing, Income, Other/People. ");
+        prompt.append("Health & Fitness, Rent/Housing, Income, Withdrawal, Other/People. ");
+        prompt.append("Use Withdrawal only for cash withdrawals from ATMs or bank counters. ");
         prompt.append("2) Extract the merchant name - the actual business or person being paid, ");
         prompt.append("cleaned up from bank noise (e.g. 'POS DEBIT SWIGGY BANGALORE IN 4482' -> 'Swiggy'). ");
         prompt.append("If no clear merchant can be identified, use \"Unknown\". ");
@@ -108,7 +114,9 @@ public class GeminiCategorizationService {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            throw new RuntimeException("Gemini API call failed: " + response.statusCode() + " - " + response.body());
+            String body = response.body();
+            String shortBody = body.length() > 300 ? body.substring(0, 300) : body;
+            throw new RuntimeException("Gemini returned status " + response.statusCode() + ": " + shortBody);
         }
 
         JsonNode root = objectMapper.readTree(response.body());
@@ -118,7 +126,7 @@ public class GeminiCategorizationService {
     }
 
     private List<CategorizationResult> parseResults(String rawResponse, int expectedCount) throws Exception {
-        // Gemini sometimes wraps its JSON in markdown code fences - strip those if present
+        // Gemini sometimes wraps its JSON in mark-down code fences - strip those if present
         String cleaned = rawResponse.trim()
                 .replaceAll("^```json", "")
                 .replaceAll("^```", "")
