@@ -224,7 +224,7 @@ function GoalCard({ goal, onContribute, onWithdraw, onDelete }) {
 
 /* ---------- main section ---------- */
 
-function SavingsGoals({ refreshKey, onTotalSavedChange }) {
+function SavingsGoals({ refreshKey, onTotalSavedChange, onGoalsChange }) {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
@@ -297,6 +297,7 @@ function SavingsGoals({ refreshKey, onTotalSavedChange }) {
         savedAmount: saved ? Number(saved) : 0,
       });
       setOverview(data);
+      onGoalsChange?.();
       setName('');
       setTarget('');
       setTargetDate('');
@@ -312,11 +313,13 @@ function SavingsGoals({ refreshKey, onTotalSavedChange }) {
   const handleContribute = async (id, amount) => {
     const data = await contributeToGoal(id, amount);
     setOverview(data);
+    onGoalsChange?.();
   };
 
   const handleWithdraw = async (id, amount) => {
     const data = await withdrawFromGoal(id, amount);
     setOverview(data);
+    onGoalsChange?.();
   };
 
   const handleConfirmDelete = async () => {
@@ -324,6 +327,7 @@ function SavingsGoals({ refreshKey, onTotalSavedChange }) {
     try {
       const data = await deleteGoal(deletingGoal.id);
       setOverview(data);
+      onGoalsChange?.();
       setDeletingGoal(null);
       setDeleteError(null);
     } catch (err) {

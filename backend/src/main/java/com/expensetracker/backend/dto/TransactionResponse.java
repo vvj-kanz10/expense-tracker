@@ -13,9 +13,11 @@ public class TransactionResponse {
     private String category;
     private String type;
     private String source;
+    private BigDecimal balance; // running balance printed on the bank statement (can be null)
 
     public TransactionResponse(Long id, String description, String merchant, BigDecimal amount,
-                               LocalDate transactionDate, String category, String type, String source) {
+                               LocalDate transactionDate, String category, String type, String source,
+                               BigDecimal balance) {
         this.id = id;
         this.description = description;
         this.merchant = merchant;
@@ -24,6 +26,13 @@ public class TransactionResponse {
         this.category = category;
         this.type = type;
         this.source = source;
+        this.balance = balance;
+    }
+
+    // Old 8-argument constructor kept so any other code that still uses it keeps compiling
+    public TransactionResponse(Long id, String description, String merchant, BigDecimal amount,
+                               LocalDate transactionDate, String category, String type, String source) {
+        this(id, description, merchant, amount, transactionDate, category, type, source, null);
     }
 
     // Getters
@@ -35,4 +44,5 @@ public class TransactionResponse {
     public String getCategory() { return category; }
     public String getType() { return type; }
     public String getSource() { return source; }
+    public BigDecimal getBalance() { return balance; }
 }

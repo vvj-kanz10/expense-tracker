@@ -6,6 +6,7 @@ import com.expensetracker.backend.dto.UploadResult;
 import com.expensetracker.backend.model.CategoryRule;
 import com.expensetracker.backend.model.Transaction;
 import com.expensetracker.backend.model.User;
+import com.expensetracker.backend.repository.CashSplitRepository;
 import com.expensetracker.backend.repository.TransactionRepository;
 import com.expensetracker.backend.repository.UserRepository;
 import com.expensetracker.backend.statement.ParsedTransaction;
@@ -17,15 +18,25 @@ import com.expensetracker.backend.statement.DefaultCategoryRules;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
 public class TransactionService {
+
+    // name@bank style UPI IDs (also matches ones we already masked, so masking twice is harmless)
+    private static final Pattern UPI_ID = Pattern.compile("([A-Za-z0-9._*-]+)@([A-Za-z0-9.-]+)");
+    // account / reference / phone numbers: 5 or more digits in a row
+    private static final Pattern LONG_DIGITS = Pattern.compile("\\d{5,}");
 
     @Autowired
     private GeminiCategorizationService geminiCategorizationService;
@@ -38,6 +49,9 @@ public class TransactionService {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private CashSplitRepository cashSplitRepository;
 
     // Helper: find the logged-in user by username (comes from JWT via SecurityContext)
     private User getUserByUsername(String username) {
@@ -55,7 +69,8 @@ public class TransactionService {
                 t.getTransactionDate(),
                 t.getCategory(),
                 t.getType(),
-                t.getSource()
+                t.getSource(),
+                t.getBalance()
         );
     }
 
@@ -64,7 +79,7 @@ public class TransactionService {
 
         Transaction transaction = new Transaction();
         transaction.setUser(user);
-        transaction.setDescription(request.getDescription());
+        transaction.setDescription(maskForStorage(request.getDescription()));
         transaction.setMerchant(request.getMerchant());
         transaction.setAmount(request.getAmount());
         transaction.setTransactionDate(request.getTransactionDate());
@@ -100,7 +115,7 @@ public class TransactionService {
         String oldCategory = transaction.getCategory();
         String oldMerchant = transaction.getMerchant();
 
-        transaction.setDescription(request.getDescription());
+        transaction.setDescription(maskForStorage(request.getDescription()));
         transaction.setMerchant(request.getMerchant());
         transaction.setAmount(request.getAmount());
         transaction.setTransactionDate(request.getTransactionDate());
@@ -130,15 +145,16 @@ public class TransactionService {
             throw new RuntimeException("You are not allowed to delete this transaction");
         }
 
+        cashSplitRepository.deleteByTransactionId(transactionId);
         transactionRepository.delete(transaction);
     }
 
     // Takes the raw parsed rows from PDF/CSV parsing, skips any that are already in the
-    // database, applies the user's saved rules, categorizes the remaining rows with Gemini,
-    // saves everything, and reports how many duplicates were skipped.
-    // Takes the raw parsed rows from PDF/CSV parsing, skips any that are already in the
     // database, then categorizes the new ones in three layers:
     //   1) the user's own saved rules  2) built-in merchant rules  3) Gemini for the rest
+    // Categorizing uses the FULL description (UPI IDs often contain the merchant name).
+    // Only right before saving do we mask the description, so the database never holds
+    // full UPI IDs or long account/reference numbers.
     public UploadResult saveParsedTransactions(String username, List<ParsedTransaction> parsedList, String source) {
         User user = getUserByUsername(username);
 
@@ -151,7 +167,7 @@ public class TransactionService {
         int skipped = parsedList.size() - fresh.size();
 
         if (fresh.isEmpty()) {
-            return new UploadResult(List.of(), skipped);
+            return new UploadResult(List.of(), skipped, List.of());
         }
 
         List<Transaction> transactions = fresh.stream()
@@ -164,8 +180,13 @@ public class TransactionService {
         int byBuiltInRule = 0;
 
         for (Transaction t : transactions) {
-            // Layer 1: the user's own corrections always win
-            CategoryRule rule = categoryRuleService.findMatch(userRules, t.getDescription());
+            // Layer 1: the user's own corrections always win.
+            // Rules are saved from stored (masked) descriptions, so try the masked text first,
+            // then the full text so rules saved before masking existed still match.
+            CategoryRule rule = categoryRuleService.findMatch(userRules, maskForStorage(t.getDescription()));
+            if (rule == null) {
+                rule = categoryRuleService.findMatch(userRules, t.getDescription());
+            }
             if (rule != null) {
                 t.setCategory(rule.getCategory());
                 String merchant = rule.getMerchant();
@@ -174,7 +195,7 @@ public class TransactionService {
                 continue;
             }
 
-            // Layer 2: built-in rules for common merchants
+            // Layer 2: built-in rules for common merchants (uses the full description)
             DefaultCategoryRules.Match match = DefaultCategoryRules.find(t.getDescription());
             if (match != null) {
                 t.setCategory(match.category());
@@ -191,7 +212,7 @@ public class TransactionService {
                 + byBuiltInRule + " by built-in rules, " + needsGemini.size() + " sent to Gemini");
 
         if (!needsGemini.isEmpty()) {
-            needsGemini.forEach(t -> System.out.println("  -> to Gemini: " + t.getDescription()));
+            needsGemini.forEach(t -> System.out.println("  -> to Gemini: " + maskForStorage(t.getDescription())));
             List<String> descriptions = needsGemini.stream()
                     .map(t -> maskForAi(t.getDescription()))
                     .collect(Collectors.toList());
@@ -215,17 +236,24 @@ public class TransactionService {
             }
         }
 
+        // Categorizing is finished, so now hide the sensitive parts before anything is stored
+        for (Transaction t : transactions) {
+            t.setDescription(maskForStorage(t.getDescription()));
+        }
+
         List<Transaction> saved = transactionRepository.saveAll(transactions);
 
         List<TransactionResponse> responses = saved.stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
 
-        return new UploadResult(responses, skipped);
+        List<UploadResult.PossibleMatch> possibleMatches = findPossibleManualMatches(user, saved);
+
+        return new UploadResult(responses, skipped, possibleMatches);
     }
 
     // Removes UPI IDs (name@bank) and long digit strings (account/reference numbers)
-    // before text is sent to Gemini. The saved transaction keeps its full description.
+    // before text is sent to Gemini. Gemini never sees any part of them.
     private String maskForAi(String description) {
         if (description == null) return "";
         return description
@@ -234,6 +262,74 @@ public class TransactionService {
                 .replaceAll("/{2,}", "/")
                 .replaceAll("[/\\s]+$", "")
                 .trim();
+    }
+
+    // Partly hides sensitive details for the database:
+    //   rahul123@oksbi  ->  ra****@oksbi   (first 2 letters + bank handle kept)
+    //   123456789012    ->  ****9012       (last 4 digits kept)
+    // The result is the same no matter how many times it is applied, so old and new
+    // text can be compared safely (duplicate detection and learned rules rely on that).
+    private String maskForStorage(String description) {
+        if (description == null) return null;
+
+        Matcher upi = UPI_ID.matcher(description);
+        StringBuilder afterUpi = new StringBuilder();
+        while (upi.find()) {
+            String local = upi.group(1);
+            String keep = local.substring(0, Math.min(2, local.length()));
+            upi.appendReplacement(afterUpi, Matcher.quoteReplacement(keep + "****@" + upi.group(2)));
+        }
+        upi.appendTail(afterUpi);
+
+        Matcher digits = LONG_DIGITS.matcher(afterUpi.toString());
+        StringBuilder result = new StringBuilder();
+        while (digits.find()) {
+            String run = digits.group();
+            digits.appendReplacement(result,
+                    Matcher.quoteReplacement("****" + run.substring(run.length() - 4)));
+        }
+        digits.appendTail(result);
+
+        return result.toString();
+    }
+
+    // How many days apart a manual entry and a statement row may be and still look like
+    // the same payment (the bank often posts a day or two after the real payment date)
+    private static final int MATCH_WINDOW_DAYS = 2;
+
+    // Looks for manual entries that could be the same payment as a freshly uploaded row:
+    // same type, same amount, and a date within MATCH_WINDOW_DAYS. Each manual entry is
+    // matched with at most one statement row (the closest date wins). Nothing is changed
+    // here; the user decides in the UI.
+    private List<UploadResult.PossibleMatch> findPossibleManualMatches(User user, List<Transaction> newlySaved) {
+        List<Transaction> manualRows = transactionRepository.findByUserId(user.getId()).stream()
+                .filter(t -> "MANUAL".equals(t.getSource()))
+                .collect(Collectors.toList());
+        List<UploadResult.PossibleMatch> matches = new ArrayList<>();
+        if (manualRows.isEmpty()) {
+            return matches;
+        }
+        Set<Long> usedManualIds = new HashSet<>();
+        for (Transaction statementRow : newlySaved) {
+            Transaction best = null;
+            long bestGap = Long.MAX_VALUE;
+            for (Transaction manual : manualRows) {
+                if (usedManualIds.contains(manual.getId())) continue;
+                if (!Objects.equals(manual.getType(), statementRow.getType())) continue;
+                if (manual.getAmount().compareTo(statementRow.getAmount()) != 0) continue;
+                long gap = Math.abs(ChronoUnit.DAYS.between(
+                        manual.getTransactionDate(), statementRow.getTransactionDate()));
+                if (gap <= MATCH_WINDOW_DAYS && gap < bestGap) {
+                    best = manual;
+                    bestGap = gap;
+                }
+            }
+            if (best != null) {
+                usedManualIds.add(best.getId());
+                matches.add(new UploadResult.PossibleMatch(toResponse(best), toResponse(statementRow)));
+            }
+        }
+        return matches;
     }
 
     /* ---------- duplicate detection ---------- */
@@ -287,8 +383,10 @@ public class TransactionService {
         return true;
     }
 
+    // The description is masked first, so a new statement row (full text) and a stored row
+    // (masked text) produce the same key.
     private String baseKey(LocalDate date, BigDecimal amount, String description) {
-        return date + "|" + normalizeAmount(amount) + "|" + normalizeText(description);
+        return date + "|" + normalizeAmount(amount) + "|" + normalizeText(maskForStorage(description));
     }
 
     // 480.00 and 480.0 should count as the same number

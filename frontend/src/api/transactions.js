@@ -5,6 +5,11 @@ export const getTransactions = async () => {
   return response.data;
 };
 
+export const createTransaction = async (payload) => {
+  const response = await axiosInstance.post('/transactions', payload);
+  return response.data;
+};
+
 export const uploadStatement = (file, onUploadProgress, password = null) => {
   const formData = new FormData();
   formData.append("file", file);

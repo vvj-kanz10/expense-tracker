@@ -22,6 +22,9 @@ public class AuthService {
     @Autowired
     private JwtUtil jwtUtil;
 
+    @Autowired
+    private EmailService emailService;
+
     public AuthResponse register(RegisterRequest request) {
 
         // Check if username or email already exists
@@ -39,6 +42,10 @@ public class AuthService {
         user.setPassword(passwordEncoder.encode(request.getPassword())); // never store plain text
 
         userRepository.save(user);
+
+        // Send the welcome email. EmailService catches its own errors,
+        // so a mail problem can never break registration.
+        emailService.sendWelcomeEmail(user.getEmail(), user.getUsername());
 
         // Generate token immediately so user is logged in right after registering
         String token = jwtUtil.generateToken(user.getUsername());

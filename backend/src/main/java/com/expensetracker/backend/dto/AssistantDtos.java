@@ -17,7 +17,9 @@ public final class AssistantDtos {
 
     // The only kinds of question the assistant will answer
     public enum Intent {
-        TOTAL_SPENT, TOTAL_INCOME, COMPARE_SPENT, BIGGEST_EXPENSES, TOP_CATEGORIES, UNSUPPORTED
+        TOTAL_SPENT, TOTAL_INCOME, COMPARE_SPENT, BIGGEST_EXPENSES, TOP_CATEGORIES,
+        TOP_MERCHANTS, COUNT_TRANSACTIONS, AVERAGE_SPEND, SAVINGS, LIST_TRANSACTIONS,
+        UNSUPPORTED
     }
 
     // What Gemini's JSON turns into after it has been checked
@@ -29,6 +31,7 @@ public final class AssistantDtos {
             LocalDate end,
             LocalDate compareStart,     // only for COMPARE_SPENT
             LocalDate compareEnd,
-            int limit                   // 1..10, for the "top N" questions
+            int limit,                  // 1..10, for the "top N" and list questions
+            String type                 // "EXPENSE", "INCOME" or null, for COUNT and LIST questions
     ) {}
 }

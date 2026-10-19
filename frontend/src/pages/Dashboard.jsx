@@ -1,24 +1,31 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getTransactions, uploadStatement, updateTransaction, deleteTransaction } from '../api/transactions';
+import { getTransactions, uploadStatement, updateTransaction, deleteTransaction, createTransaction } from '../api/transactions';
+import { getSplits, saveSplits } from '../api/splits';
 import ThemeToggle from '../components/ThemeToggle';
 import EditTransactionModal from '../components/EditTransactionModal';
+import AddTransactionModal from '../components/AddTransactionModal';
+import CashSplits from '../components/CashSplits';
+import SplitWithdrawalModal from '../components/SplitWithdrawalModal';
+import DuplicateMatchDialog from '../components/DuplicateMatchDialog';
 import ConfirmDialog from '../components/ConfirmDialog';
 import CategoryPieChart from '../components/CategoryPieChart';
 import IncomeVsExpenseChart from '../components/IncomeVsExpenseChart';
 import BudgetLimitForm from '../components/BudgetLimitForm';
 import BudgetAlerts from '../components/BudgetAlerts';
 import SpendingInsights from '../components/SpendingInsights';
-import ChargeInsights from '../components/ChargeInsights';
 import SavingsGoals from '../components/SavingsGoals';
 import FinancialAssistant from '../components/FinancialAssistant';
 import LearnedRules from '../components/LearnedRules';
 import UploadProgress from '../components/UploadProgress';
+import MonthlyForecastWidget from '../components/MonthlyForecastWidget';
+import ExportReportModal from '../components/ExportReportModal';
 import {
-  LogOut, Wallet, TrendingUp, TrendingDown, PiggyBank, Sparkles,
-  ChevronDown, ChevronUp, Search, Upload, Plus, Lock,
-  Pencil, Trash2, Loader2, LayoutDashboard, BarChart3, Lightbulb, Target, ListFilter,
-  GraduationCap, Users, UserCheck, Flag
+  LogOut, TrendingUp, TrendingDown, PiggyBank, Sparkles,
+  ChevronDown, Search, Upload, Plus, Lock, Banknote,
+  Pencil, Trash2, Loader2, LayoutDashboard, Lightbulb, Target, ListFilter,
+  GraduationCap, Users, UserCheck, Flag, Coins, PieChart, LineChart, ShieldAlert,
+  FileDown
 } from 'lucide-react';
 
 /* ---------- helpers ---------- */
@@ -51,6 +58,70 @@ function getUsernameFromToken() {
   }
 }
 
+// Smoothly counts a number up/down to its new value (used for the big balance).
+// Skips the animation if the user's device is set to reduce motion.
+function useCountUp(target, duration = 800) {
+  const [value, setValue] = useState(Number(target) || 0);
+  const current = useRef(Number(target) || 0);
+
+  useEffect(() => {
+    const to = Number(target) || 0;
+    const from = current.current;
+    if (from === to) return undefined;
+
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      current.current = to;
+      setValue(to);
+      return undefined;
+    }
+
+    let frame;
+    const startTime = performance.now();
+    const tick = (now) => {
+      const progress = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3); // starts fast, slows down at the end
+      const next = from + (to - from) * eased;
+      current.current = next;
+      setValue(next);
+      if (progress < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, duration]);
+
+  return value;
+}
+
+// Swaps each split withdrawal for its parts, so category views show where the cash went.
+// Whatever was not split stays as "Withdrawal". Totals stay exactly the same.
+function applySplits(transactions, splits) {
+  if (!splits || splits.length === 0) return transactions;
+  const byTransaction = {};
+  splits.forEach((s) => {
+    if (!byTransaction[s.transactionId]) byTransaction[s.transactionId] = [];
+    byTransaction[s.transactionId].push(s);
+  });
+  const result = [];
+  transactions.forEach((tx) => {
+    const parts = byTransaction[tx.id];
+    if (!parts || tx.type !== 'EXPENSE') {
+      result.push(tx);
+      return;
+    }
+    let used = 0;
+    parts.forEach((p) => {
+      used += Number(p.amount);
+      result.push({ ...tx, id: `split-${p.id}`, category: p.category, amount: Number(p.amount), merchant: 'Cash', source: 'CASH_SPLIT' });
+    });
+    const rest = Math.round((Number(tx.amount) - used) * 100) / 100;
+    if (rest > 0) {
+      result.push({ ...tx, id: `${tx.id}-rest`, amount: rest });
+    }
+  });
+  return result;
+}
+
 function isErrorMessage(msg) {
   return (
     msg.startsWith('Upload failed') ||
@@ -62,7 +133,9 @@ function isErrorMessage(msg) {
 
 const NAV_SECTIONS = [
   { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} /> },
-  { id: 'charts', label: 'Charts', icon: <BarChart3 size={16} /> },
+  { id: 'charts', label: 'Charts', icon: <PieChart size={16} /> },
+  { id: 'cash', label: 'Cash', icon: <Banknote size={16} /> },
+  { id: 'forecast', label: 'Forecast', icon: <LineChart size={16} /> },
   { id: 'insights', label: 'Insights', icon: <Lightbulb size={16} /> },
   { id: 'budget', label: 'Budget', icon: <Target size={16} /> },
   { id: 'goals', label: 'Goals', icon: <Flag size={16} /> },
@@ -108,12 +181,14 @@ function TypePill({ type }) {
 
 function MiniStat({ label, value, icon }) {
   return (
-    <div className="bg-bg dark:bg-[#131c2e] rounded-xl px-4 py-3 border border-gray-200/60 dark:border-gray-800/80 shadow-sm">
-      <div className="flex items-center gap-1.5 text-xs font-medium mb-1">
+    <div className="card-hover bg-gray-50/70 dark:bg-[#182438] rounded-xl p-3.5 border border-gray-200/60 dark:border-gray-800/80 shadow-sm flex items-center gap-3">
+      <div className="p-2.5 rounded-xl bg-white dark:bg-[#111827] shadow-sm text-primary flex items-center justify-center">
         {icon}
-        <span className="text-gray-500 dark:text-gray-400">{label}</span>
       </div>
-      <p className="text-base font-bold text-text">{value}</p>
+      <div>
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 block mb-0.5">{label}</span>
+        <p className="text-base font-bold text-gray-900 dark:text-white">{value}</p>
+      </div>
     </div>
   );
 }
@@ -159,6 +234,7 @@ function UploadControls({
     <div className={`flex flex-col items-center justify-center space-y-4 max-w-md mx-auto py-4 transition-all duration-300 ${centered ? 'text-center' : ''}`}>
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-center w-full">
         <input
+          key={`${idSuffix}-${selectedFile?.name || 'empty'}`}
           type="file"
           accept=".csv,.pdf"
           onChange={onFileChange}
@@ -168,9 +244,9 @@ function UploadControls({
         <button
           onClick={onUpload}
           disabled={busy}
-          className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 active:scale-95 transition-all shadow-md disabled:opacity-50 whitespace-nowrap"
+          className="bg-primary text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:opacity-90 transition-all shadow-md disabled:opacity-50 whitespace-nowrap flex items-center justify-center gap-2"
         >
-          {buttonLabel}
+          <Upload size={16} /> {buttonLabel}
         </button>
       </div>
 
@@ -240,12 +316,18 @@ function Dashboard() {
   const [budgetRefreshKey, setBudgetRefreshKey] = useState(0);
 
   const [goalsTotalSaved, setGoalsTotalSaved] = useState(0);
+  const [goalsVersion, setGoalsVersion] = useState(0);
   const [username, setUsername] = useState(null);
   const [rulesRefreshKey, setRulesRefreshKey] = useState(0);
 
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [deletingTransaction, setDeletingTransaction] = useState(null);
   const [deletingMonth, setDeletingMonth] = useState(null);
+  const [addingTransaction, setAddingTransaction] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
+  const [splits, setSplits] = useState([]);
+  const [splittingWithdrawal, setSplittingWithdrawal] = useState(null);
+  const [pendingMatches, setPendingMatches] = useState([]);
   const [deleteError, setDeleteError] = useState(null);
 
   const hasData = !loading && !error && transactions.length > 0;
@@ -263,6 +345,10 @@ function Dashboard() {
     fetchTransactions();
     setUsername(getUsernameFromToken());
   }, []);
+
+  useEffect(() => {
+    getSplits().then(setSplits).catch(() => setSplits([]));
+  }, [transactions.length]);
 
   useEffect(() => {
     const measure = () => setHeaderH(headerRef.current?.offsetHeight || 0);
@@ -336,9 +422,31 @@ function Dashboard() {
   const totalExpenses = transactions
     .filter((tx) => tx.type === 'EXPENSE')
     .reduce((sum, tx) => sum + Number(tx.amount), 0);
-  const balance = totalIncome - totalExpenses;
-  const savingsRate = totalIncome > 0 ? ((balance / totalIncome) * 100).toFixed(1) : '0.0';
+
+  const netSavings = totalIncome - totalExpenses;
+  const savingsRate = totalIncome > 0 ? ((netSavings / totalIncome) * 100).toFixed(1) : '0.0';
+
+  const latestWithBalance = transactions
+    .filter((tx) => tx.balance !== null && tx.balance !== undefined)
+    .reduce((latest, tx) => {
+      if (!latest) return tx;
+      const txTime = new Date(tx.transactionDate).getTime();
+      const latestTime = new Date(latest.transactionDate).getTime();
+      return txTime > latestTime || (txTime === latestTime && tx.id > latest.id) ? tx : latest;
+    }, null);
+
+  const manualAdjustment = transactions
+    .filter((tx) => tx.source === 'MANUAL')
+    .reduce((sum, tx) => sum + (tx.type === 'INCOME' ? Number(tx.amount) : -Number(tx.amount)), 0);
+
+  const balance = latestWithBalance
+    ? Number(latestWithBalance.balance) + manualAdjustment
+    : netSavings;
   const freeToSpend = balance - goalsTotalSaved;
+  const animatedBalance = useCountUp(balance);
+
+  const withdrawals = transactions.filter((tx) => tx.type === 'EXPENSE' && tx.category === 'Withdrawal');
+  const effectiveTransactions = applySplits(transactions, splits);
 
   const allMonthsGrouped = groupByMonth(transactions);
   const allMonths = Object.keys(allMonthsGrouped).sort(
@@ -346,17 +454,18 @@ function Dashboard() {
   );
 
   const latestMonth = allMonths[0];
-  const latestExpenses = latestMonth
-    ? allMonthsGrouped[latestMonth].transactions.filter((tx) => tx.type === 'EXPENSE')
+  const latestEffectiveExpenses = latestMonth
+    ? (groupByMonth(effectiveTransactions)[latestMonth]?.transactions || []).filter((tx) => tx.type === 'EXPENSE')
     : [];
-  const latestSpent = latestExpenses.reduce((sum, tx) => sum + Number(tx.amount), 0);
+  const latestSpent = latestEffectiveExpenses.reduce((sum, tx) => sum + Number(tx.amount), 0);
+
   const latestByCategory = {};
-  latestExpenses.forEach((tx) => {
+  latestEffectiveExpenses.forEach((tx) => {
     const key = tx.category || 'Uncategorized';
     latestByCategory[key] = (latestByCategory[key] || 0) + Number(tx.amount);
   });
   const topCategoryEntry = Object.entries(latestByCategory).sort((a, b) => b[1] - a[1])[0];
-  const biggestExpense = latestExpenses.reduce(
+  const biggestExpense = latestEffectiveExpenses.reduce(
     (max, tx) => (!max || Number(tx.amount) > Number(max.amount) ? tx : max),
     null
   );
@@ -391,6 +500,31 @@ function Dashboard() {
     const updated = await updateTransaction(id, payload);
     setTransactions((prev) => prev.map((tx) => (tx.id === id ? { ...tx, ...updated } : tx)));
     setRulesRefreshKey((k) => k + 1);
+  };
+
+  const handleAddTransaction = async (payload) => {
+    const created = await createTransaction(payload);
+    setTransactions((prev) => [...prev, created]);
+    const monthKey = new Date(created.transactionDate).toLocaleString('default', { month: 'long', year: 'numeric' });
+    setExpandedMonths((prev) => ({ ...prev, [monthKey]: true }));
+    setSearchTerm('');
+    setMonthFilter('All');
+  };
+
+  const handleSaveSplits = async (parts) => {
+    const data = await saveSplits(splittingWithdrawal.id, parts);
+    setSplits(data);
+  };
+
+  const handleResolveMatches = async (manualIds) => {
+    const results = await Promise.allSettled(manualIds.map((id) => deleteTransaction(id)));
+    const deleted = manualIds.filter((_, i) => results[i].status === 'fulfilled');
+    setTransactions((prev) => prev.filter((tx) => !deleted.includes(tx.id)));
+    setPendingMatches((prev) => prev.filter((m) => !deleted.includes(m.manual.id)));
+    if (deleted.length < manualIds.length) {
+      throw new Error('Some entries could not be merged. Please try again.');
+    }
+    setPendingMatches([]);
   };
 
   const handleConfirmDelete = async () => {
@@ -461,6 +595,7 @@ function Dashboard() {
 
       const added = response.data?.transactions?.length ?? 0;
       const skipped = response.data?.skippedDuplicates ?? 0;
+      const possibleMatches = response.data?.possibleMatches ?? [];
 
       setUploadStage(null);
       setSelectedFile(null);
@@ -492,6 +627,10 @@ function Dashboard() {
           await new Promise((resolve) => setTimeout(resolve, minDisplay - elapsed));
         }
         setRefreshingAfterUpload(false);
+      }
+
+      if (possibleMatches.length > 0) {
+        setPendingMatches(possibleMatches);
       }
     } catch (err) {
       setUploadStage(null);
@@ -532,7 +671,7 @@ function Dashboard() {
   return (
     <div className="min-h-screen bg-[#f8fafc] dark:bg-[#0b0f19] text-gray-900 dark:text-gray-100 relative flex flex-col justify-between transition-colors duration-200">
       {refreshingAfterUpload && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-white space-y-3">
+        <div className="animate-fadeIn fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex flex-col items-center justify-center text-white space-y-3">
           <Loader2 size={40} className="animate-spin text-primary" />
           <p className="text-lg font-medium">Parsing statement & refreshing dashboard...</p>
         </div>
@@ -549,16 +688,14 @@ function Dashboard() {
             className="flex items-center justify-between px-6 sm:px-8 py-3 border-b border-gray-200/80 dark:border-gray-800/80 bg-white/90 dark:bg-[#111827]/90 backdrop-blur-md"
           >
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-primary/10 text-primary">
-                <Wallet size={22} />
-              </div>
+              <img src="/logo.svg" alt="MoneyTrack AI" className="h-11 w-11" />
               <div>
-                <h1 className="text-lg font-bold tracking-tight leading-tight">ArivGo Expense</h1>
+                <h1 className="text-lg font-bold tracking-tight leading-tight">MoneyTrack AI</h1>
                 <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">AI-Powered Smart Expense Tracker</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-1 pl-1 pr-1 py-1 rounded-full bg-gray-100 dark:bg-[#1a2333] border border-gray-200 dark:border-gray-800 shadow-sm">
+            <div className="flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-full bg-gray-100 dark:bg-[#1a2333] border border-gray-200 dark:border-gray-800 shadow-sm">
               {username && (
                 <span className="px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
                   {username}
@@ -575,10 +712,10 @@ function Dashboard() {
             </div>
           </header>
 
-          <nav className="px-6 sm:px-8 py-2 border-b border-gray-200/80 dark:border-gray-800/80 bg-white/80 dark:bg-[#111827]/80 backdrop-blur-md">
+          <nav className="px-6 sm:px-8 py-2.5 border-b border-gray-200/80 dark:border-gray-800/80 bg-white/80 dark:bg-[#111827]/80 backdrop-blur-md">
             <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
               <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 flex-1 py-0.5">
-                {hasData && NAV_SECTIONS.map((section) => {
+                {hasData && NAV_SECTIONS.filter((s) => s.id !== 'cash' || withdrawals.length > 0).map((section) => {
                   const isActive = activeSection === section.id;
                   return (
                     <button
@@ -586,7 +723,7 @@ function Dashboard() {
                       onClick={() => handleNavClick(section.id)}
                       className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                         isActive
-                          ? 'bg-primary text-white shadow-sm font-semibold shadow-primary/20'
+                          ? 'bg-primary text-white shadow-md font-semibold shadow-primary/20 scale-[1.02]'
                           : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1a2333]'
                       }`}
                     >
@@ -612,7 +749,7 @@ function Dashboard() {
           )}
 
           {!loading && !error && transactions.length === 0 && (
-            <section className="bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm border border-gray-200/80 dark:border-gray-800/80 p-10 text-center">
+            <section className="animate-rise bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm border border-gray-200/80 dark:border-gray-800/80 p-10 text-center">
               <Upload size={40} className="mx-auto text-primary mb-4" />
               <h2 className="text-xl font-semibold mb-2">No transactions yet</h2>
               <p className="text-gray-500 dark:text-gray-400 mb-6">
@@ -624,89 +761,111 @@ function Dashboard() {
 
           {hasData && (
             <>
+              {/* Overview Section */}
               <section id="overview" className="grid grid-cols-12 gap-6 scroll-mt-24">
-                <div className="col-span-12 lg:col-span-7 rounded-2xl shadow-md p-6 bg-white dark:bg-[#131c2e] border-2 border-primary/40 dark:border-primary/30 hover:border-primary/60 dark:hover:border-primary/50 transition-all relative overflow-hidden">
-                  <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="animate-rise card-hover col-span-12 lg:col-span-7 rounded-2xl shadow-lg p-6 sm:p-8 bg-gradient-to-br from-white via-white to-primary/[0.03] dark:from-[#131c2e] dark:via-[#131c2e] dark:to-primary/[0.08] border-2 border-primary/30 dark:border-primary/20 relative overflow-hidden">
+                  <div className="absolute -right-12 -bottom-12 w-48 h-48 bg-primary/10 rounded-full blur-3xl pointer-events-none" />
 
-                  <div className="flex items-center gap-2 text-primary font-semibold text-sm mb-1">
-                    <Wallet size={18} />
-                    <span>Total Balance</span>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-primary font-semibold text-sm">
+                      <Coins size={18} />
+                      <span>Total Net Balance</span>
+                    </div>
                   </div>
 
                   <div className="mb-6">
-                    <p className="text-4xl font-extrabold tracking-tight">{formatCurrency(balance)}</p>
+                    <p className="text-4xl sm:text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums">{formatCurrency(animatedBalance)}</p>
                     {goalsTotalSaved > 0 && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
-                        <span className="font-semibold text-gray-900 dark:text-gray-200">{formatCurrency(goalsTotalSaved)}</span> set aside for goals
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-gray-800 dark:text-gray-200">{formatCurrency(goalsTotalSaved)}</span> set aside for goals
                         {' · '}
                         {freeToSpend >= 0 ? (
                           <>
                             <span className="font-semibold text-primary">{formatCurrency(freeToSpend)}</span> free to spend
                           </>
                         ) : (
-                          <span className="font-semibold text-danger">
-                            {formatCurrency(Math.abs(freeToSpend))} more than your statements show
+                          <span
+                            className="font-semibold text-danger"
+                            title="This compares money set aside for goals with your current balance; it is not a budget overrun."
+                          >
+                            Goals exceed your balance by {formatCurrency(Math.abs(freeToSpend))}
                           </span>
                         )}
                       </p>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                     <MiniStat
-                      label="Income"
+                      label="Total Income"
                       value={formatCurrency(totalIncome)}
-                      icon={<TrendingUp size={14} className="text-success" />}
+                      icon={<TrendingUp size={18} className="text-emerald-600 dark:text-emerald-400" />}
                     />
                     <MiniStat
-                      label="Expenses"
+                      label="Total Expenses"
                       value={formatCurrency(totalExpenses)}
-                      icon={<TrendingDown size={14} className="text-danger" />}
+                      icon={<TrendingDown size={18} className="text-rose-600 dark:text-rose-400" />}
                     />
                     <MiniStat
                       label="Savings Rate"
                       value={`${savingsRate}%`}
-                      icon={<PiggyBank size={14} className="text-secondary" />}
+                      icon={<PiggyBank size={18} className="text-indigo-600 dark:text-indigo-400" />}
                     />
                   </div>
                 </div>
 
-                <div className="col-span-12 lg:col-span-5 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 flex flex-col justify-between">
+                <div className="animate-rise delay-1 card-hover col-span-12 lg:col-span-5 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 sm:p-8 border border-gray-200/80 dark:border-gray-800/80 flex flex-col justify-between relative overflow-hidden">
                   <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <Sparkles size={18} className="text-primary" />
-                      <h2 className="text-base font-semibold">Quick Insight</h2>
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500">
+                        <Sparkles size={20} />
+                      </div>
+                      <h2 className="text-base font-semibold">Quick Highlight Insight</h2>
                     </div>
-                    {latestMonth && latestExpenses.length > 0 ? (
-                      <div className="space-y-2.5 text-sm">
-                        <p className="text-gray-400 dark:text-gray-500 text-xs font-medium uppercase tracking-wider">{latestMonth}</p>
-                        <p className="text-gray-700 dark:text-gray-300">
-                          You spent <span className="font-semibold text-primary">{formatCurrency(latestSpent)}</span> this month.
-                        </p>
-                        {topCategoryEntry && (
-                          <p className="text-gray-700 dark:text-gray-300 flex items-center gap-1.5 flex-wrap">
-                            <span>Top category:</span>
-                            <CategoryPill category={topCategoryEntry[0]} />{' '}
-                            <span className="font-semibold">({formatCurrency(topCategoryEntry[1])})</span>.
+
+                    {latestMonth && latestEffectiveExpenses.length > 0 ? (
+                      <div className="space-y-3 text-sm">
+                        <div className="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wider">
+                          <span>{latestMonth} Summary</span>
+                          <span>Active Period</span>
+                        </div>
+                        <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-[#182438] border border-gray-100 dark:border-gray-800 space-y-2">
+                          <p className="text-gray-700 dark:text-gray-300">
+                            Spent <span className="font-semibold text-primary">{formatCurrency(latestSpent)}</span> this month.
                           </p>
-                        )}
+                          {topCategoryEntry && (
+                            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 pt-1 border-t border-gray-200/50 dark:border-gray-800">
+                              <span>Top category:</span>
+                              <div className="flex items-center gap-1.5 font-medium">
+                                <CategoryPill category={topCategoryEntry[0]} />
+                                <span className="font-bold">({formatCurrency(topCategoryEntry[1])})</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                         {biggestExpense && (
-                          <p className="text-gray-700 dark:text-gray-300 truncate">
-                            Biggest expense:{' '}
-                            <span className="font-semibold">{formatCurrency(biggestExpense.amount)}</span>
-                            {biggestExpense.merchant ? ` at ${biggestExpense.merchant}` : ''}.
-                          </p>
+                          <div className="flex items-center gap-2.5 text-xs text-gray-500 dark:text-gray-400 bg-rose-500/5 p-2.5 rounded-xl border border-rose-500/10">
+                            <ShieldAlert size={16} className="text-rose-500 shrink-0" />
+                            <span className="truncate">
+                              Largest: <strong className="text-gray-700 dark:text-gray-200">{formatCurrency(biggestExpense.amount)}</strong>{' '}
+                              {biggestExpense.merchant && biggestExpense.merchant !== 'Unknown'
+                                ? `at ${biggestExpense.merchant}`
+                                : biggestExpense.description
+                                  ? `· ${biggestExpense.description}`
+                                  : ''}
+                            </span>
+                          </div>
                         )}
                       </div>
                     ) : (
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Upload a statement with expenses to see a quick summary here.</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">Upload a statement with expenses to unlock personalized analytics.</p>
                     )}
                   </div>
                 </div>
               </section>
 
               <section id="charts" className="grid grid-cols-12 gap-6 scroll-mt-24">
-                <div className="col-span-12 lg:col-span-6 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 flex flex-col">
+                <div className="animate-rise delay-1 card-hover col-span-12 lg:col-span-6 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 flex flex-col">
                   <h2 className="text-base font-semibold mb-4">Income vs Expense</h2>
                   <div className="flex-1 flex items-center justify-center">
                     <div className="w-full">
@@ -715,43 +874,77 @@ function Dashboard() {
                   </div>
                 </div>
 
-                <div className="col-span-12 lg:col-span-6 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80">
-                  <CategoryPieChart transactions={transactions} />
+                <div className="animate-rise delay-2 card-hover col-span-12 lg:col-span-6 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80">
+                  <CategoryPieChart transactions={effectiveTransactions} />
                 </div>
               </section>
 
-              <section id="insights" className="bg-card rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-gray-700 scroll-mt-24">
-                <SpendingInsights transactions={transactions} />
-                <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-                  <ChargeInsights refreshKey={transactions.length} />
-                </div>
+              {withdrawals.length > 0 && (
+                <section id="cash" className="animate-rise bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
+                  <CashSplits
+                    withdrawals={withdrawals}
+                    splits={splits}
+                    onSplit={setSplittingWithdrawal}
+                  />
+                </section>
+              )}
+
+              <section id="forecast" className="animate-rise scroll-mt-24">
+                <MonthlyForecastWidget />
               </section>
 
-              <section id="budget" className="bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 space-y-4 scroll-mt-24">
+              <section id="insights" className="animate-rise bg-card rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-gray-700 scroll-mt-24">
+                <SpendingInsights
+                  transactions={effectiveTransactions}
+                  refreshKey={budgetRefreshKey + goalsVersion}
+                />
+              </section>
+
+              <section id="budget" className="animate-rise bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 space-y-4 scroll-mt-24">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold">Budget Limits</h2>
                   <button
                     onClick={() => setBudgetLimitsOpen(!budgetLimitsOpen)}
-                    className="flex items-center gap-1 text-sm bg-primary text-white px-3.5 py-1.5 rounded-lg hover:opacity-90 transition font-semibold shadow-sm"
+                    className="flex items-center gap-1.5 text-sm bg-primary text-white px-4 py-2 rounded-xl hover:opacity-90 transition-all font-semibold shadow-sm"
                   >
                     <Plus size={16} /> {budgetLimitsOpen ? 'Cancel' : 'Add/Edit Limits'}
                   </button>
                 </div>
                 {budgetLimitsOpen && (
-                  <BudgetLimitForm onLimitSet={() => { setBudgetRefreshKey((k) => k + 1); }} />
+                  <div className="animate-fadeIn">
+                    <BudgetLimitForm onLimitSet={() => { setBudgetRefreshKey((k) => k + 1); }} />
+                  </div>
                 )}
-                <BudgetAlerts transactions={transactions} refreshKey={budgetRefreshKey} />
+                <BudgetAlerts transactions={effectiveTransactions} refreshKey={budgetRefreshKey} />
               </section>
 
-              <section id="goals" className="bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
+              <section id="goals" className="animate-rise bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
                 <SavingsGoals
                   refreshKey={transactions.length}
                   onTotalSavedChange={setGoalsTotalSaved}
+                  onGoalsChange={() => setGoalsVersion((k) => k + 1)}
                 />
               </section>
 
-              <section id="transactions" className="bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
-                <h2 className="text-lg font-semibold mb-4">Transactions</h2>
+              <section id="transactions" className="animate-rise bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
+                <div className="flex items-center justify-between mb-4 gap-2">
+                  <h2 className="text-lg font-semibold">Transactions</h2>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setExportingReport(true)}
+                      className="flex items-center gap-1 text-sm border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 px-3.5 py-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-[#1a2333] transition-all font-semibold"
+                    >
+                      <FileDown size={16} /> Report
+                    </button>
+                    <button
+                      onClick={() => setAddingTransaction(true)}
+                      className="flex items-center gap-1 text-sm bg-primary text-white px-3.5 py-1.5 rounded-lg hover:opacity-90 transition-all font-semibold shadow-sm"
+                    >
+                      <Plus size={16} /> Add transaction
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-col sm:flex-row gap-3 mb-4 sm:justify-between">
                   <div className="relative w-full sm:w-64">
                     <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
@@ -785,9 +978,12 @@ function Dashboard() {
                   return (
                     <div key={month} className="border-b border-gray-100 dark:border-gray-800 py-3 last:border-b-0">
                       <div className="flex items-center justify-between">
-                        <div
-                          className="flex items-center gap-2 cursor-pointer flex-1 py-1"
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 cursor-pointer flex-1 py-1 text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                           onClick={() => toggleMonth(month)}
+                          aria-expanded={Boolean(isExpanded)}
+                          aria-label={`${isExpanded ? 'Collapse' : 'Expand'} transactions for ${month}`}
                         >
                           <span className="font-semibold">
                             {month} ({monthTransactions.length})
@@ -796,9 +992,9 @@ function Dashboard() {
                             size={18}
                             className={`text-gray-400 transition-transform duration-300 ${isExpanded ? 'rotate-180 text-primary' : ''}`}
                           />
-                        </div>
+                        </button>
                         <button
-                          onClick={(e) => { e.stopPropagation(); setDeletingMonth(month); setDeleteError(null); }}
+                          onClick={() => { setDeletingMonth(month); setDeleteError(null); }}
                           aria-label={`Delete all transactions in ${month}`}
                           title="Delete entire month"
                           className="p-1.5 rounded-lg text-gray-400 hover:text-danger dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-[#1a2333] transition"
@@ -808,8 +1004,8 @@ function Dashboard() {
                       </div>
 
                       {isExpanded && (
-                        <div className="overflow-x-auto mt-3">
-                          <table className="w-full text-sm text-left">
+                        <div className="animate-fadeIn overflow-x-auto mt-3">
+                          <table className="w-full min-w-[780px] text-sm text-left">
                             <thead>
                               <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-800 text-xs uppercase tracking-wider">
                                 <th className="py-2.5 font-medium">Date</th>
@@ -832,7 +1028,7 @@ function Dashboard() {
                                   <td className="text-gray-500 dark:text-gray-400 max-w-xs truncate" title={tx.description}>{tx.description}</td>
                                   <td><CategoryPill category={tx.category} /></td>
                                   <td><TypePill type={tx.type} /></td>
-                                  <td className={`text-right font-semibold whitespace-nowrap ${tx.type === 'INCOME' ? 'text-success' : 'text-danger'}`}>
+                                  <td className={`text-right font-semibold whitespace-nowrap tabular-nums ${tx.type === 'INCOME' ? 'text-success' : 'text-danger'}`}>
                                     {tx.type === 'INCOME' ? '+' : '-'}{formatCurrency(tx.amount)}
                                   </td>
                                   <td className="text-right">
@@ -868,10 +1064,13 @@ function Dashboard() {
 
               <LearnedRules refreshKey={rulesRefreshKey} />
 
-              <section id="upload-section" className="bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
-                <div
-                  className="flex items-center justify-between cursor-pointer"
+              <section id="upload-section" className="animate-rise bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between cursor-pointer text-left rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   onClick={() => setUploadOpen(!uploadOpen)}
+                  aria-expanded={uploadOpen}
+                  aria-controls="statement-upload-controls"
                 >
                   <h2 className="text-base font-semibold flex items-center gap-2">
                     <Upload size={18} /> Upload Statement
@@ -880,10 +1079,10 @@ function Dashboard() {
                     size={18}
                     className={`text-gray-400 transition-transform duration-300 ${uploadOpen ? 'rotate-180 text-primary' : ''}`}
                   />
-                </div>
+                </button>
 
                 {uploadOpen && (
-                  <div className="mt-4">
+                  <div id="statement-upload-controls" className="animate-fadeIn mt-4">
                     <UploadControls idSuffix="main" {...uploadControlProps} />
                   </div>
                 )}
@@ -921,6 +1120,40 @@ function Dashboard() {
 
       {/* Floating AI Assistant Widget */}
       <FinancialAssistant />
+
+      {exportingReport && (
+        <ExportReportModal
+          months={allMonths}
+          transactions={transactions}
+          effectiveTransactions={effectiveTransactions}
+          username={username}
+          onClose={() => setExportingReport(false)}
+        />
+      )}
+
+      {splittingWithdrawal && (
+        <SplitWithdrawalModal
+          withdrawal={splittingWithdrawal}
+          existingSplits={splits.filter((s) => s.transactionId === splittingWithdrawal.id)}
+          onSave={handleSaveSplits}
+          onClose={() => setSplittingWithdrawal(null)}
+        />
+      )}
+
+      {pendingMatches.length > 0 && (
+        <DuplicateMatchDialog
+          matches={pendingMatches}
+          onResolve={handleResolveMatches}
+          onClose={() => setPendingMatches([])}
+        />
+      )}
+
+      {addingTransaction && (
+        <AddTransactionModal
+          onSave={handleAddTransaction}
+          onClose={() => setAddingTransaction(false)}
+        />
+      )}
 
       {editingTransaction && (
         <EditTransactionModal

@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
-import axios from 'axios';
-import { MessageSquare, Send, Sparkles, Loader2, Bot, User, X } from 'lucide-react';
+import api from '../api/axios';
+import { Send, Sparkles, Loader2, Bot, User, X } from 'lucide-react';
 
 const SUGGESTED_QUESTIONS = [
-  "How much did I spend on food in September?",
-  "What did I earn in August?",
-  "Compare my groceries in August and July",
-  "What were my 5 biggest expenses last month?",
-  "Where does most of my money go?"
+  "How much did I spend last month?",
+  "How much did I save last month?",
+  "Where does most of my money go?",
+  "Which shops do I spend the most at?",
+  "What were my 5 biggest expenses?",
+  "What's my average daily spend?",
+  "Compare this month with last month",
+  "Show my latest transactions"
 ];
 
 export default function FinancialAssistant() {
@@ -15,7 +18,7 @@ export default function FinancialAssistant() {
   const [messages, setMessages] = useState([
     {
       sender: 'assistant',
-      text: "Hi! I'm your ArivGo assistant. Ask me anything about your statements — like spending, income, comparisons, or top expenses.",
+      text: "Hi! I'm your MoneyTrack assistant. Ask me about your statements: spending, income, savings, averages, top shops, comparisons, or a list of transactions.",
       rows: []
     }
   ]);
@@ -43,12 +46,8 @@ export default function FinancialAssistant() {
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.post(
-        '/api/assistant/ask',
-        { question: q },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      // The shared api instance already adds the base URL and the login token
+      const response = await api.post('/assistant/ask', { question: q });
 
       const data = response.data;
       setMessages((prev) => [
@@ -94,7 +93,7 @@ export default function FinancialAssistant() {
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:justify-end sm:p-6 bg-black/40 backdrop-blur-xs animate-fadeIn">
           <div className="bg-card border border-gray-200 dark:border-gray-700 w-full sm:w-[440px] h-[85vh] sm:h-[600px] rounded-t-3xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-slideUp">
-            
+
             {/* Header */}
             <div className="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-bg/50">
               <div className="flex items-center gap-2.5">
@@ -102,7 +101,7 @@ export default function FinancialAssistant() {
                   <Sparkles size={18} />
                 </div>
                 <div>
-                  <h2 className="text-base font-semibold text-text">ArivGo Assistant</h2>
+                  <h2 className="text-base font-semibold text-text">MoneyTrack Assistant</h2>
                   <p className="text-xs text-gray-400">Grounded in your statement data</p>
                 </div>
               </div>

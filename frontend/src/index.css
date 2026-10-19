@@ -24,24 +24,106 @@
   --color-secondary: #60A5FA;
 }
 
+html {
+  scroll-behavior: smooth;
+  /* keeps section headings from hiding under the sticky nav when you jump to them */
+  scroll-padding-top: 5rem;
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
   font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   transition: background 0.2s ease, color 0.2s ease;
 }
 
 /* Smooth Entrance Animation (Opacity-only to prevent breaking fixed modals) */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .animate-fadeIn {
   animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* Card entrance: fades in while sliding up a little.
+   Uses "backwards" (not "forwards") so no transform is left on the element
+   after it finishes. A leftover transform would break fixed modals inside it.
+   Only put this on cards, never on a wrapper that contains a modal. */
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-rise {
+  animation: riseIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+/* Stagger helpers, so a row of cards appears one after another */
+.delay-1 { animation-delay: 0.05s; }
+.delay-2 { animation-delay: 0.1s; }
+.delay-3 { animation-delay: 0.15s; }
+.delay-4 { animation-delay: 0.2s; }
+
+/* Hover lift for cards: rises slightly and the shadow deepens */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -10px rgb(0 0 0 / 0.15);
+}
+
+/* Buttons get a small press-down effect when clicked */
+button {
+  transition: transform 0.1s ease, background-color 0.2s ease, opacity 0.2s ease;
+}
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Clear keyboard focus ring in the theme color */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Slimmer scrollbars (Chrome/Edge) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text) 25%, transparent);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text) 40%, transparent);
+}
+
+/* Respect users who turn animations off in their OS settings */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

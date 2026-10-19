@@ -120,10 +120,22 @@ public class PdfParserService {
                 // Opening/Closing balance row - no transaction amount
                 previousBalance = balance;
                 continue;
+            } else if (numbers.size() >= 3) {
+                // Separate Debit and Credit columns: [Debit, Credit, Balance]
+                BigDecimal debit = parseAmount(numbers.get(0));
+                BigDecimal credit = parseAmount(numbers.get(1));
+
+                if (credit.signum() > 0) {
+                    amount = credit;
+                    type = "CREDIT";
+                } else {
+                    amount = debit;
+                    type = "DEBIT";
+                }
             } else {
+                // Single amount column format: [Amount, Balance]
                 amount = parseAmount(numbers.get(0));
                 if (previousBalance == null) {
-                    // No opening balance anywhere - guess from the description
                     type = guessTypeFromDescription(description);
                 } else {
                     type = balance.compareTo(previousBalance) > 0 ? "CREDIT" : "DEBIT";

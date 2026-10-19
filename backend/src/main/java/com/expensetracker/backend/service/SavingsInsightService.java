@@ -79,7 +79,6 @@ public class SavingsInsightService {
         String prompt = buildPrompt(stats);
 
         try {
-            // Tries only once now — no hanging loops or sleeping threads
             String rawResponse = callGemini(prompt);
             return parseSuggestions(rawResponse);
         } catch (Exception e) {
@@ -112,19 +111,15 @@ public class SavingsInsightService {
 
     private String buildPrompt(Map<String, Object> stats) {
         String promptTemplate = """
-        You are a friendly, down-to-earth personal finance buddy. Write 3 short, super conversational savings tips based on the user's spending data.
+        You are a professional financial advisor. Write 3 concise, formal, and highly actionable savings tips based strictly on the user's provided spending data.
 
         RULES:
         1. FORMAT: Output MUST be a valid raw JSON array containing exactly 3 string elements. No Markdown, no code fences, or extra text.
-        2. NO WEIRD PERCENTAGES: Do not use exaggerated or confusing percentages. If you mention a number, use clear rupee amounts (like ₹1,200) or talk about everyday habits simply without sounding like a math textbook.
-        3. PLAIN, HUMAN LANGUAGE: Talk like a real friend giving casual advice. Avoid stiff corporate jargon like "scale back," "optimize," "tame," or "allocate." Use words like "try," "cut back a bit on," "swap," or "skip."
-        4. PRACTICAL & SIMPLE ACTIONS: Suggest everyday fixes like:
-        - Cooking at home or ordering delivery a bit less.
-        - Making a shopping list before hitting the grocery store.
-        - Checking for small recurring subscriptions you don't use.
-        - Choosing local or budget-friendly options.
-        5. DIVERSITY: Each tip must focus on a completely different spending category.
-        6. FOCUS ON WHAT IS HIGHER THAN USUAL: If "spikes" lists categories, build the tips around those first, using the rupee amounts given. If there are no spikes, base the tips on the top category and the biggest transaction.
+        2. MINIMAL NUMERICAL DATA: Avoid heavy calculations or excessive numbers. Keep the focus on structured, practical financial habits rather than specific monetary amounts.
+        3. FORMAL & PROFESSIONAL TONE: Use a polite, objective, and formal tone suitable for financial guidance. Avoid casual slang, overly colloquial expressions, or stiff corporate buzzwords.
+        4. ACTIONABLE & OBJECTIVE: Provide practical steps for expense management (e.g., evaluating recurring expenses, establishing category caps, or streamlining routine purchases).
+        5. NO SPECULATIVE ASSUMPTIONS: Do not make assumptions or invent specific life events/incidents to explain why a category increased. Address elevated categories objectively based strictly on the provided data metrics.
+        6. DIVERSITY: Each tip must focus on a distinct spending category or financial habit.
 
         SPENDING DATA:
         """;
