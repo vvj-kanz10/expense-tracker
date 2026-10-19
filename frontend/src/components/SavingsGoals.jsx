@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { getGoals, createGoal, contributeToGoal, withdrawFromGoal, deleteGoal } from '../api/goals';
 import ConfirmDialog from './ConfirmDialog';
 import LeftoverSplit from './LeftoverSplit';
-import { Flag, Plus, Minus, Loader2, Trash2, Check, CalendarDays, Info, Wallet, AlertCircle, Sparkles } from 'lucide-react';
+import { PiggyBank, Plus, Minus, Loader2, Trash2, Check, CalendarDays, Info, Landmark, TrendingDown, ChartPie } from 'lucide-react';
 
 /* ---------- helpers ---------- */
 
@@ -355,14 +355,14 @@ function SavingsGoals({ refreshKey, onTotalSavedChange, onGoalsChange }) {
       {/* Header with command buttons */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-text flex items-center gap-2">
-          <Flag size={18} className="text-primary" /> Savings Goals
+          <PiggyBank size={18} className="text-primary" /> Savings Goals
         </h2>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setSplitOpen(true)}
             className="flex items-center gap-1.5 text-sm bg-primary/10 text-primary hover:bg-primary/20 px-3.5 py-1.5 rounded-lg transition font-semibold"
           >
-            <Sparkles size={16} /> Suggest Split
+              <ChartPie size={16} /> Suggest Split
           </button>
           <button
             onClick={() => { setFormOpen(!formOpen); setFormError(null); }}
@@ -378,7 +378,7 @@ function SavingsGoals({ refreshKey, onTotalSavedChange, onGoalsChange }) {
         <div className="bg-bg border border-gray-200/60 dark:border-gray-700/60 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className={`p-2 rounded-xl ${isDeficit ? 'bg-danger/10 text-danger' : 'bg-primary/10 text-primary'}`}>
-              {isDeficit ? <AlertCircle size={18} /> : <Wallet size={18} />}
+              {isDeficit ? <TrendingDown size={18} /> : <Landmark size={18} />}
             </div>
             <div>
               <p className="text-xs text-gray-400">
@@ -512,7 +512,7 @@ function SavingsGoals({ refreshKey, onTotalSavedChange, onGoalsChange }) {
           >
             <div className="flex items-center justify-between pb-2 border-b border-gray-100 dark:border-gray-800">
               <h3 className="text-base font-semibold text-text flex items-center gap-2">
-                <Sparkles size={18} className="text-primary" /> AI Leftover Split Suggestion
+                <ChartPie size={18} className="text-primary" /> AI Leftover Split Suggestion
               </h3>
               <button
                 onClick={() => setSplitOpen(false)}

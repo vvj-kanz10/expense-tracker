@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Sparkles, Calculator } from 'lucide-react';
+import { ChartPie, Calculator } from 'lucide-react';
 import { getLeftoverSplit } from '../api/leftover';
 
 function formatCurrency(amount) {
@@ -97,7 +97,7 @@ export default function LeftoverSplit({ refreshKey }) {
               <div className="flex items-center gap-2 text-xs font-medium text-gray-400">
                 {data.source === 'AI' ? (
                   <>
-                    <Sparkles size={14} className="text-primary" /> Suggested by AI
+                    <ChartPie size={14} className="text-primary" /> Suggested by AI
                   </>
                 ) : (
                   <>

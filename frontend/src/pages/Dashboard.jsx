@@ -23,9 +23,9 @@ import ExportReportModal from '../components/ExportReportModal';
 import {
   LogOut, TrendingUp, TrendingDown, PiggyBank, Sparkles,
   ChevronDown, Search, Upload, Plus, Lock, Banknote,
-  Pencil, Trash2, Loader2, LayoutDashboard, Lightbulb, Target, ListFilter,
-  GraduationCap, Users, UserCheck, Flag, Coins, PieChart, LineChart, ShieldAlert,
-  FileDown
+  Pencil, Trash2, Loader2, ShieldAlert, Coins,
+  GraduationCap, Users, UserCheck, FileDown,
+  House, ChartNoAxesColumn, CalendarClock, Eye, Gauge, Receipt, FileUp, CalendarRange
 } from 'lucide-react';
 
 /* ---------- helpers ---------- */
@@ -132,15 +132,15 @@ function isErrorMessage(msg) {
 }
 
 const NAV_SECTIONS = [
-  { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} /> },
-  { id: 'charts', label: 'Charts', icon: <PieChart size={16} /> },
+  { id: 'overview', label: 'Overview', icon: <House size={16} /> },
+  { id: 'charts', label: 'Charts', icon: <ChartNoAxesColumn size={16} /> },
   { id: 'cash', label: 'Cash', icon: <Banknote size={16} /> },
-  { id: 'forecast', label: 'Forecast', icon: <LineChart size={16} /> },
-  { id: 'insights', label: 'Insights', icon: <Lightbulb size={16} /> },
-  { id: 'budget', label: 'Budget', icon: <Target size={16} /> },
-  { id: 'goals', label: 'Goals', icon: <Flag size={16} /> },
-  { id: 'transactions', label: 'Transactions', icon: <ListFilter size={16} /> },
-  { id: 'upload-section', label: 'Upload', icon: <Upload size={16} /> },
+  { id: 'forecast', label: 'Forecast', icon: <CalendarClock size={16} /> },
+  { id: 'insights', label: 'Insights', icon: <Eye size={16} /> },
+  { id: 'budget', label: 'Budget', icon: <Gauge size={16} /> },
+  { id: 'goals', label: 'Goals', icon: <PiggyBank size={16} /> },
+  { id: 'transactions', label: 'Transactions', icon: <Receipt size={16} /> },
+  { id: 'upload-section', label: 'Upload', icon: <FileUp size={16} /> },
 ];
 
 const CATEGORY_STYLES = {
@@ -818,7 +818,7 @@ function Dashboard() {
                   <div>
                     <div className="flex items-center gap-2 mb-4">
                       <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500">
-                        <Sparkles size={20} />
+                        <CalendarRange size={20} />
                       </div>
                       <h2 className="text-base font-semibold">Quick Highlight Insight</h2>
                     </div>

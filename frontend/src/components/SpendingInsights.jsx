@@ -2,9 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import { generatePersonalTips, getCachedPersonalTips } from '../api/personalTips';
 import { getChargeInsights } from '../api/charges';
 import {
-  Calendar, TrendingUp, TrendingDown, AlertTriangle, Sparkles, Loader2, Lightbulb,
-  Eye, EyeOff, ArrowUpRight, ArrowDownRight, Wallet, Target, PiggyBank, ChevronDown,
-  Repeat, CheckCircle2,
+  Calendar, TrendingUp, TrendingDown, Loader2,
+  ArrowUpRight, ArrowDownRight, ChevronDown, ChevronUp,
+  HandCoins, ArrowRight, ListChecks, CreditCard,
+  GitCompareArrows, ChartColumnIncreasing, CalendarSync, ScanSearch, ShieldCheck,
+  Utensils, ShoppingBasket, Bus, ShoppingBag, Zap, Clapperboard, Dumbbell, Building2, Tag, Banknote,
 } from 'lucide-react';
 
 /* ---------- Helper Functions ---------- */
@@ -198,7 +200,18 @@ function EmptyState({ icon, title, hint, tone }) {
   );
 }
 
-const TIP_ICONS = [Lightbulb, Target, PiggyBank];
+const CATEGORY_ICONS = {
+  'Food & Dining': Utensils,
+  'Groceries': ShoppingBasket,
+  'Transport': Bus,
+  'Shopping': ShoppingBag,
+  'Bills & Utilities': Zap,
+  'Entertainment': Clapperboard,
+  'Health & Fitness': Dumbbell,
+  'Rent/Housing': Building2,
+  'Withdrawal': Banknote,
+};
+
 const LOADING_STEPS = [
   'Reading your transactions...',
   'Spotting spending patterns...',
@@ -481,16 +494,16 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
   const recurringTotal = Number(charges?.recurringMonthlyTotal ?? charges?.totalRecurringMonthly ?? 0);
 
   // Tabs of the detail card (the first two only appear when there is something to show)
-  const tabs = [];
-  if (availableMonths.length > 1) tabs.push({ id: 'changes', label: 'What changed', icon: TrendingUp });
-  if (spikes.length > 0) tabs.push({ id: 'usual', label: 'Above average', icon: AlertTriangle, count: spikes.length });
-  tabs.push({ id: 'recurring', label: 'Recurring bills', icon: Repeat });
-  tabs.push({
-    id: 'unusual',
-    label: 'Unusual charges',
-    icon: AlertTriangle,
-    count: unusualList.length > 0 ? unusualList.length : null,
-  });
+ const tabs = [];
+if (availableMonths.length > 1) tabs.push({ id: 'changes', label: 'What changed', icon: GitCompareArrows });
+if (spikes.length > 0) tabs.push({ id: 'usual', label: 'Above average', icon: ChartColumnIncreasing, count: spikes.length });
+tabs.push({ id: 'recurring', label: 'Recurring bills', icon: CalendarSync });
+tabs.push({
+  id: 'unusual',
+  label: 'Unusual charges',
+  icon: ScanSearch,
+  count: unusualList.length > 0 ? unusualList.length : null,
+});
 
   const activeTab = tabs.some((t) => t.id === detailTab) ? detailTab : tabs[0].id;
 
@@ -510,7 +523,7 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
         <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-primary text-white shadow-md shadow-primary/30">
-              <Sparkles size={20} />
+              <HandCoins size={20} />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -562,12 +575,12 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
                   onClick={handleFetchOrToggleTips}
                   className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:text-primary transition cursor-pointer shrink-0"
                 >
-                  <EyeOff size={14} /> Hide
+                  <ChevronUp size={14} /> Hide
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {tips.map((tip, i) => {
-                  const TipIcon = TIP_ICONS[i % TIP_ICONS.length];
+                  const TipIcon = CATEGORY_ICONS[tip.category] || Tag;
                   return (
                     <div
                       key={i}
@@ -616,7 +629,7 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card/70 border border-gray-200/60 dark:border-gray-700/60 rounded-2xl p-4 sm:p-5">
               <div className="flex items-start gap-3.5">
                 <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
-                  <Lightbulb size={18} />
+                  <ListChecks size={18} />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-text">
@@ -632,7 +645,7 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
                 onClick={handleFetchOrToggleTips}
                 className="bg-primary text-white px-5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold hover:opacity-90 transition flex items-center justify-center gap-2 shadow-md shadow-primary/20 cursor-pointer whitespace-nowrap"
               >
-                {hasTips ? <Eye size={16} /> : <Sparkles size={16} />}
+                {hasTips ? <ChevronDown size={16} /> : <ArrowRight size={16} />}
                 <span>{hasTips ? 'View Tips' : 'Generate Smart Insights'}</span>
               </button>
             </div>
@@ -646,7 +659,7 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
       <div className={`${cardClass} animate-rise grid grid-cols-1 sm:grid-cols-2 sm:divide-x divide-gray-200/60 dark:divide-gray-700/60`}>
         <div className="p-5 flex items-start gap-4">
           <div className="p-3 rounded-xl bg-primary/10 text-primary shrink-0">
-            <Wallet size={20} />
+            <CreditCard size={20} />
           </div>
           <div className="min-w-0">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Total spent</p>
@@ -804,7 +817,7 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
             <p className="text-sm text-danger">{chargesError}</p>
           ) : recurringList.length === 0 ? (
             <EmptyState
-              icon={<Repeat size={20} />}
+              icon={<CalendarSync size={20} />}
               tone="bg-primary/10 text-primary"
               title="No recurring bills yet"
               hint="Payments that repeat every month will show up here."
@@ -835,7 +848,7 @@ function SpendingInsights({ transactions = [], refreshKey = 0 }) {
             <p className="text-sm text-danger">{chargesError}</p>
           ) : unusualList.length === 0 ? (
             <EmptyState
-              icon={<CheckCircle2 size={20} />}
+              icon={<ShieldCheck size={20} />}
               tone="bg-emerald-500/10 text-emerald-500"
               title="All clear"
               hint="No charges that look unusually large for their category."
