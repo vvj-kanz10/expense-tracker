@@ -234,6 +234,7 @@ public class TransactionService {
 
         Map<String, CategoryRule> userRules = categoryRuleService.loadRules(user);
         List<Transaction> needsGemini = new ArrayList<>();
+        List<Transaction> needsMerchantOnlyGemini = new ArrayList<>();
         int byUserRule = 0;
         int byBuiltInRule = 0;
 
@@ -249,6 +250,14 @@ public class TransactionService {
                 t.setCategory(rule.getCategory());
                 String merchant = rule.getMerchant();
                 t.setMerchant(merchant != null && !merchant.isBlank() ? merchant : "Unknown");
+                if (isUnknownMerchant(t.getMerchant())) {
+                    String localMerchant = extractMerchantLocally(t.getDescription());
+                    if (!isUnknownMerchant(localMerchant)) {
+                        t.setMerchant(localMerchant);
+                    } else {
+                        needsMerchantOnlyGemini.add(t);
+                    }
+                }
                 byUserRule++;
                 continue;
             }
@@ -258,16 +267,56 @@ public class TransactionService {
             if (match != null) {
                 t.setCategory(match.category());
                 t.setMerchant(match.merchant());
+                if (isUnknownMerchant(t.getMerchant())) {
+                    String localMerchant = extractMerchantLocally(t.getDescription());
+                    if (!isUnknownMerchant(localMerchant)) {
+                        t.setMerchant(localMerchant);
+                    } else {
+                        needsMerchantOnlyGemini.add(t);
+                    }
+                }
                 byBuiltInRule++;
                 continue;
             }
 
-            // Layer 3: leave it for Gemini
+            // Layer 3: Gemini categorizes unresolved rows. Prefer a locally extracted
+            // merchant if Gemini cannot identify one.
+            String localMerchant = extractMerchantLocally(t.getDescription());
+            if (!isUnknownMerchant(localMerchant)) {
+                t.setMerchant(localMerchant);
+            }
             needsGemini.add(t);
         }
 
         System.out.println("Categorization: " + byUserRule + " by user rules, "
-                + byBuiltInRule + " by built-in rules, " + needsGemini.size() + " sent to Gemini");
+                + byBuiltInRule + " by built-in rules, " + needsGemini.size()
+                + " sent for category + merchant categorization, and "
+                + needsMerchantOnlyGemini.size() + " sent for merchant-only extraction");
+
+        // Rows already categorized by a user/built-in rule keep that category.
+        // Gemini receives only masked descriptions and is asked for merchant names only.
+        if (!needsMerchantOnlyGemini.isEmpty()) {
+            List<String> merchantDescriptions = needsMerchantOnlyGemini.stream()
+                    .map(t -> maskForAi(t.getDescription()))
+                    .collect(Collectors.toList());
+            try {
+                List<String> merchants = geminiCategorizationService.extractMerchants(merchantDescriptions);
+                for (int i = 0; i < needsMerchantOnlyGemini.size(); i++) {
+                    Transaction t = needsMerchantOnlyGemini.get(i);
+                    if (isUnknownMerchant(t.getMerchant()) && !isUnknownMerchant(merchants.get(i))) {
+                        t.setMerchant(merchants.get(i));
+                    }
+                }
+            } catch (Exception e) {
+                // Merchant extraction is best-effort; never block the statement upload.
+                System.err.println("Gemini merchant extraction failed; retaining Unknown: " + e.getMessage());
+                for (Transaction t : needsMerchantOnlyGemini) {
+                    if (t.getMerchant() == null || t.getMerchant().isBlank()) {
+                        t.setMerchant("Unknown");
+                    }
+                }
+            }
+        }
 
         if (!needsGemini.isEmpty()) {
             needsGemini.forEach(t -> System.out.println("  -> to Gemini: " + maskForStorage(t.getDescription())));
@@ -280,7 +329,11 @@ public class TransactionService {
                         geminiCategorizationService.categorize(descriptions);
                 for (int i = 0; i < needsGemini.size(); i++) {
                     needsGemini.get(i).setCategory(results.get(i).category());
-                    needsGemini.get(i).setMerchant(results.get(i).merchant());
+                    String currentMerchant = needsGemini.get(i).getMerchant();
+                    String geminiMerchant = results.get(i).merchant();
+                    if (isUnknownMerchant(currentMerchant) && !isUnknownMerchant(geminiMerchant)) {
+                        needsGemini.get(i).setMerchant(geminiMerchant);
+                    }
                 }
             } catch (Exception e) {
                 // Gemini failed even after retries (e.g. sustained high demand) — don't block
@@ -308,6 +361,66 @@ public class TransactionService {
         List<UploadResult.PossibleMatch> possibleMatches = findPossibleManualMatches(user, saved);
 
         return new UploadResult(responses, skipped, possibleMatches);
+    }
+
+    private boolean isUnknownMerchant(String merchant) {
+        return merchant == null || merchant.isBlank()
+                || "unknown".equalsIgnoreCase(merchant.trim());
+    }
+
+    // UPI narrations commonly look like UPI/DR/reference/payee/bank/...
+    // Extract the payee segment locally before considering an AI call.
+    private String extractMerchantLocally(String description) {
+        if (description == null || description.isBlank()) {
+            return "Unknown";
+        }
+
+        String[] parts = description.split("/");
+        for (int i = 0; i < parts.length - 1; i++) {
+            if ("UPI".equalsIgnoreCase(parts[i].trim())
+                    && i + 3 < parts.length
+                    && ("DR".equalsIgnoreCase(parts[i + 1].trim())
+                    || "CR".equalsIgnoreCase(parts[i + 1].trim()))) {
+                String candidate = parts[i + 3].trim();
+                if (isPlausibleMerchantSegment(candidate)) {
+                    return cleanMerchant(candidate);
+                }
+            }
+        }
+
+        // Some statements omit the UPI prefix but still put the reference before the payee.
+        Matcher matcher = Pattern.compile("(?i)\\b(?:UPI\\s+)?(?:DR|CR)\\s+\\d{5,}\\s+([A-Z][A-Z0-9 .&'-]{1,35}?)(?=\\s+(?:YESB|ICIC|HDFC|SBIN|UTIB|KKBK|PUNB|IDFB|BARB|FDRL|PAYTM|OKAX|OKIC|OKSB|YBL)\\b|$)")
+                .matcher(description);
+        if (matcher.find()) {
+            String candidate = matcher.group(1).trim();
+            if (isPlausibleMerchantSegment(candidate)) {
+                return cleanMerchant(candidate);
+            }
+        }
+        return "Unknown";
+    }
+
+    private boolean isPlausibleMerchantSegment(String candidate) {
+        if (candidate == null || candidate.isBlank()) return false;
+        String value = candidate.trim();
+        if (value.matches("(?i)\\d+|[*xX]+|(?:XXXX|MASKED).*")) return false;
+        if (value.matches("(?i)(YESB|ICIC|HDFC|SBIN|UTIB|KKBK|PUNB|IDFB|BARB|FDRL|PAYTM|OKAX|OKIC|OKSB|YBL|UPI|IMPS|NEFT|RTGS)")) return false;
+        return value.length() >= 2 && value.matches("[A-Za-z][A-Za-z0-9 .&'()_-]*");
+    }
+
+    private String cleanMerchant(String merchant) {
+        String cleaned = merchant.replaceAll("\\s+", " ").trim();
+        if (cleaned.equals(cleaned.toUpperCase())) {
+            StringBuilder titleCase = new StringBuilder();
+            for (String word : cleaned.toLowerCase().split(" ")) {
+                if (word.isBlank()) continue;
+                if (titleCase.length() > 0) titleCase.append(' ');
+                titleCase.append(Character.toUpperCase(word.charAt(0)));
+                if (word.length() > 1) titleCase.append(word.substring(1));
+            }
+            cleaned = titleCase.toString();
+        }
+        return cleaned.isBlank() ? "Unknown" : cleaned;
     }
 
     // Removes UPI IDs (name@bank) and long digit strings (account/reference numbers)

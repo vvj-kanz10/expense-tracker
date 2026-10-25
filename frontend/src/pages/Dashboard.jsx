@@ -223,7 +223,7 @@ function DashboardSkeleton() {
 function UploadControls({
   idSuffix, centered,
   onFileChange, onUpload, uploadStage, uploadPercent,
-  selectedFile, requiresPdfPassword, pdfPassword, onPasswordChange, uploadMessage,
+  selectedFile, fileInputKey, requiresPdfPassword, pdfPassword, onPasswordChange, uploadMessage,
 }) {
   const busy = uploadStage !== null;
   const buttonLabel = busy
@@ -234,7 +234,7 @@ function UploadControls({
     <div className={`flex flex-col items-center justify-center space-y-4 max-w-md mx-auto py-4 transition-all duration-300 ${centered ? 'text-center' : ''}`}>
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-center w-full">
         <input
-          key={`${idSuffix}-${selectedFile?.name || 'empty'}`}
+          key={`${idSuffix}-${fileInputKey}`}
           type="file"
           accept=".csv,.pdf"
           onChange={onFileChange}
@@ -304,6 +304,9 @@ function Dashboard() {
   const headerRef = useRef(null);
 
   const [selectedFile, setSelectedFile] = useState(null);
+  // Only changes after a finished upload, to clear the file input. It must NOT depend on
+  // the selected file, or picking a file would remount (empty) the input.
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [uploadStage, setUploadStage] = useState(null);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [uploadMessage, setUploadMessage] = useState(null);
@@ -682,6 +685,7 @@ function Dashboard() {
 
       setUploadStage(null);
       setSelectedFile(null);
+      setFileInputKey((k) => k + 1);
       setRequiresPdfPassword(false);
       setPdfPassword('');
 
@@ -745,6 +749,7 @@ function Dashboard() {
     uploadStage,
     uploadPercent,
     selectedFile,
+    fileInputKey,
     requiresPdfPassword,
     pdfPassword,
     onPasswordChange: handlePasswordChange,

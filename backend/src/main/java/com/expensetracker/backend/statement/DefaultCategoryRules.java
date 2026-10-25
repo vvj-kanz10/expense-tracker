@@ -110,7 +110,7 @@ public final class DefaultCategoryRules {
         add("Income", "Unknown", "salary");
 
         // ---- Withdrawal (cash taken out at ATMs) ----
-        add("Withdrawal", "ATM", "atm", "wdl", "cash withdrawal", "cash wdl");
+        add("Withdrawal", "ATM", "atm", "cash withdrawal", "cash wdl");
     }
 
     private DefaultCategoryRules() {}
