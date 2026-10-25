@@ -120,7 +120,7 @@ export default function MonthlyForecastWidget() {
         <p className="text-sm text-gray-600 dark:text-gray-300 mt-2">
           {leftoverPositive
             ? `At your current pace you should finish ${forecast.month} with this much to spare.`
-            : `At your current pace you could overspend by this much before ${forecast.month} ends.`}
+            : `Spending is on track to be this much more than your income in ${forecast.month}.`}
         </p>
       </div>
 
@@ -157,7 +157,7 @@ export default function MonthlyForecastWidget() {
         <div className="card-hover bg-gray-50 dark:bg-[#1a2333] p-4 rounded-xl border border-gray-200/60 dark:border-gray-800">
           <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">Expected Income</p>
           <p className="text-xl font-bold text-success mt-1 tabular-nums">{formatCurrency(forecast.expectedIncome)}</p>
-          <p className="text-xs text-gray-400 mt-1">Based on historical trend</p>
+          <p className="text-xs text-gray-400 mt-1">Usual income or received so far, whichever is higher</p>
         </div>
 
         <div className="card-hover bg-gray-50 dark:bg-[#1a2333] p-4 rounded-xl border border-gray-200/60 dark:border-gray-800">

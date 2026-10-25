@@ -80,6 +80,32 @@ public class TransactionController {
         }
     }
 
+    // Which other transactions would the edited one's category/merchant apply to?
+    @GetMapping("/{id}/similar")
+    public ResponseEntity<?> getSimilarTransactions(@PathVariable Long id,
+                                                    Authentication authentication) {
+        try {
+            String username = authentication.getName();
+            List<TransactionResponse> similar = transactionService.findSimilarTransactions(username, id);
+            return ResponseEntity.ok(similar);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    // User said Yes in the popup: apply category + merchant to those similar rows
+    @PostMapping("/{id}/apply-to-similar")
+    public ResponseEntity<?> applyToSimilar(@PathVariable Long id,
+                                            Authentication authentication) {
+        try {
+            String username = authentication.getName();
+            int updated = transactionService.applyToSimilar(username, id);
+            return ResponseEntity.ok(Map.of("updated", updated));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     @PostMapping("/upload")
     public ResponseEntity<?> uploadStatement(@RequestParam("file") MultipartFile file,
                                              @RequestParam(value = "password", required = false) String password,

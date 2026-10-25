@@ -221,8 +221,9 @@ public class ForecastService {
                 .add(remainingFixed)
                 .setScale(0, RoundingMode.HALF_UP);
 
-        // Income that has already arrived this month; the usual amount only if none has yet
-        BigDecimal expectedIncome = incomeSoFar.signum() > 0 ? incomeSoFar : avgIncome;
+        // Income often arrives in chunks through the month, so expect at least the usual
+        // monthly income, or what has already arrived if that is higher
+        BigDecimal expectedIncome = incomeSoFar.max(avgIncome);
 
         List<BudgetOutlook> budgets = buildOutlooks(user, expenseSoFar, projectedTotal,
                 categorySoFar, categoryEarlierAvg, daysElapsed, daysInMonth);

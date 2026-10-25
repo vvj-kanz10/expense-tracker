@@ -330,6 +330,14 @@ function Dashboard() {
   const [pendingMatches, setPendingMatches] = useState([]);
   const [deleteError, setDeleteError] = useState(null);
 
+  // Quiet refresh: edits/deletes mark the page as "changed", and the full
+  // refresh happens once when the user scrolls back up to the top.
+  const [dataVersion, setDataVersion] = useState(0);
+  const dirtyRef = useRef(false);
+  const quietRefreshingRef = useRef(false);
+  const lastShrinkAt = useRef(0);
+  const lastDocHeight = useRef(0);
+
   const hasData = !loading && !error && transactions.length > 0;
 
   const fetchTransactions = () => {
@@ -350,6 +358,35 @@ function Dashboard() {
     getSplits().then(setSplits).catch(() => setSplits([]));
   }, [transactions.length]);
 
+  // When the user scrolls back near the top and something was edited/deleted,
+  // re-fetch quietly (no skeleton) and bump dataVersion so goals, forecast
+  // and insights re-fetch too.
+  useEffect(() => {
+    const refreshQuietly = async () => {
+      if (quietRefreshingRef.current) return;
+      quietRefreshingRef.current = true;
+      dirtyRef.current = false;
+      try {
+        const data = await getTransactions();
+        setTransactions(data);
+        setDataVersion((v) => v + 1);
+      } catch {
+        dirtyRef.current = true; // try again on the next scroll to top
+      } finally {
+        quietRefreshingRef.current = false;
+      }
+    };
+
+    const handleScrollToTop = () => {
+      if (window.scrollY < 150 && dirtyRef.current) {
+        refreshQuietly();
+      }
+    };
+
+    window.addEventListener('scroll', handleScrollToTop, { passive: true });
+    return () => window.removeEventListener('scroll', handleScrollToTop);
+  }, []);
+
   useEffect(() => {
     const measure = () => setHeaderH(headerRef.current?.offsetHeight || 0);
     measure();
@@ -357,9 +394,28 @@ function Dashboard() {
     return () => window.removeEventListener('resize', measure);
   }, [username]);
 
+  // Notes the moment the page gets shorter (delete, collapse). The browser then
+  // pushes the scroll position up by itself, which must not count as the user
+  // scrolling up, or the header would jump in.
+  useEffect(() => {
+    lastDocHeight.current = document.documentElement.scrollHeight;
+    const observer = new ResizeObserver(() => {
+      const h = document.documentElement.scrollHeight;
+      if (h < lastDocHeight.current) lastShrinkAt.current = Date.now();
+      lastDocHeight.current = h;
+    });
+    observer.observe(document.body);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
+      const scrollingUp = currentScrollY < lastScrollY.current;
+      if (scrollingUp && Date.now() - lastShrinkAt.current < 500) {
+        lastScrollY.current = currentScrollY; // content shrank, not a real scroll-up
+        return;
+      }
       if (Math.abs(currentScrollY - lastScrollY.current) < 6) return;
       if (currentScrollY > lastScrollY.current && currentScrollY > 80) {
         setShowHeader(false);
@@ -426,6 +482,9 @@ function Dashboard() {
   const netSavings = totalIncome - totalExpenses;
   const savingsRate = totalIncome > 0 ? ((netSavings / totalIncome) * 100).toFixed(1) : '0.0';
 
+  // Current Balance = the closing balance printed on the latest statement row,
+  // plus any manual entries added in the app. Net (income minus expenses) is
+  // shown separately and follows every edit and delete.
   const latestWithBalance = transactions
     .filter((tx) => tx.balance !== null && tx.balance !== undefined)
     .reduce((latest, tx) => {
@@ -442,6 +501,9 @@ function Dashboard() {
   const balance = latestWithBalance
     ? Number(latestWithBalance.balance) + manualAdjustment
     : netSavings;
+  const balanceAsOf = latestWithBalance
+    ? new Date(latestWithBalance.transactionDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
   const freeToSpend = balance - goalsTotalSaved;
   const animatedBalance = useCountUp(balance);
 
@@ -454,9 +516,13 @@ function Dashboard() {
   );
 
   const latestMonth = allMonths[0];
-  const latestEffectiveExpenses = latestMonth
-    ? (groupByMonth(effectiveTransactions)[latestMonth]?.transactions || []).filter((tx) => tx.type === 'EXPENSE')
+  const latestMonthTx = latestMonth
+    ? (groupByMonth(effectiveTransactions)[latestMonth]?.transactions || [])
     : [];
+  const latestEffectiveExpenses = latestMonthTx.filter((tx) => tx.type === 'EXPENSE');
+  const latestIncome = latestMonthTx
+    .filter((tx) => tx.type === 'INCOME')
+    .reduce((sum, tx) => sum + Number(tx.amount), 0);
   const latestSpent = latestEffectiveExpenses.reduce((sum, tx) => sum + Number(tx.amount), 0);
 
   const latestByCategory = {};
@@ -500,6 +566,19 @@ function Dashboard() {
     const updated = await updateTransaction(id, payload);
     setTransactions((prev) => prev.map((tx) => (tx.id === id ? { ...tx, ...updated } : tx)));
     setRulesRefreshKey((k) => k + 1);
+    dirtyRef.current = true;
+  };
+
+  // Called after the user says Yes to "apply to similar": reload the list
+  // right away so the other rows show their new category/merchant.
+  const handleAppliedToSimilar = async () => {
+    try {
+      const data = await getTransactions();
+      setTransactions(data);
+      setDataVersion((v) => v + 1);
+    } catch {
+      dirtyRef.current = true; // the quiet refresh will retry on scroll to top
+    }
   };
 
   const handleAddTransaction = async (payload) => {
@@ -509,6 +588,7 @@ function Dashboard() {
     setExpandedMonths((prev) => ({ ...prev, [monthKey]: true }));
     setSearchTerm('');
     setMonthFilter('All');
+    dirtyRef.current = true;
   };
 
   const handleSaveSplits = async (parts) => {
@@ -521,6 +601,7 @@ function Dashboard() {
     const deleted = manualIds.filter((_, i) => results[i].status === 'fulfilled');
     setTransactions((prev) => prev.filter((tx) => !deleted.includes(tx.id)));
     setPendingMatches((prev) => prev.filter((m) => !deleted.includes(m.manual.id)));
+    if (deleted.length > 0) dirtyRef.current = true;
     if (deleted.length < manualIds.length) {
       throw new Error('Some entries could not be merged. Please try again.');
     }
@@ -532,6 +613,7 @@ function Dashboard() {
     try {
       await deleteTransaction(deletingTransaction.id);
       setTransactions((prev) => prev.filter((tx) => tx.id !== deletingTransaction.id));
+      dirtyRef.current = true;
       setDeletingTransaction(null);
       setDeleteError(null);
     } catch (err) {
@@ -546,6 +628,7 @@ function Dashboard() {
     try {
       await Promise.all(idsToDelete.map((id) => deleteTransaction(id)));
       setTransactions((prev) => prev.filter((tx) => !idsToDelete.includes(tx.id)));
+      dirtyRef.current = true;
       setDeletingMonth(null);
       setDeleteError(null);
     } catch (err) {
@@ -769,12 +852,15 @@ function Dashboard() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2 text-primary font-semibold text-sm">
                       <Coins size={18} />
-                      <span>Total Net Balance</span>
+                      <span>Current Balance</span>
                     </div>
                   </div>
 
                   <div className="mb-6">
                     <p className="text-4xl sm:text-5xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums">{formatCurrency(animatedBalance)}</p>
+                    {balanceAsOf && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">From your statement, as of {balanceAsOf}</p>
+                    )}
                     {goalsTotalSaved > 0 && (
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold text-gray-800 dark:text-gray-200">{formatCurrency(goalsTotalSaved)}</span> set aside for goals
@@ -795,7 +881,7 @@ function Dashboard() {
                     )}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                     <MiniStat
                       label="Total Income"
                       value={formatCurrency(totalIncome)}
@@ -807,6 +893,11 @@ function Dashboard() {
                       icon={<TrendingDown size={18} className="text-rose-600 dark:text-rose-400" />}
                     />
                     <MiniStat
+                      label="Net (Income − Expenses)"
+                      value={`${netSavings < 0 ? '-' : '+'}${formatCurrency(Math.abs(netSavings))}`}
+                      icon={<Coins size={18} className="text-amber-600 dark:text-amber-400" />}
+                    />
+                    <MiniStat
                       label="Savings Rate"
                       value={`${savingsRate}%`}
                       icon={<PiggyBank size={18} className="text-indigo-600 dark:text-indigo-400" />}
@@ -814,53 +905,68 @@ function Dashboard() {
                   </div>
                 </div>
 
-                <div className="animate-rise delay-1 card-hover col-span-12 lg:col-span-5 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 sm:p-8 border border-gray-200/80 dark:border-gray-800/80 flex flex-col justify-between relative overflow-hidden">
-                  <div>
-                    <div className="flex items-center gap-2 mb-4">
+                <div className="animate-rise delay-1 card-hover col-span-12 lg:col-span-5 bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 sm:p-8 border border-gray-200/80 dark:border-gray-800/80 flex flex-col relative overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <div className="flex items-center gap-2.5">
                       <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500">
                         <CalendarRange size={20} />
                       </div>
-                      <h2 className="text-base font-semibold">Quick Highlight Insight</h2>
+                      <h2 className="text-base font-semibold">Quick Highlight</h2>
                     </div>
-
-                    {latestMonth && latestEffectiveExpenses.length > 0 ? (
-                      <div className="space-y-3 text-sm">
-                        <div className="flex items-center justify-between text-xs text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wider">
-                          <span>{latestMonth} Summary</span>
-                          <span>Active Period</span>
-                        </div>
-                        <div className="p-3.5 rounded-xl bg-gray-50 dark:bg-[#182438] border border-gray-100 dark:border-gray-800 space-y-2">
-                          <p className="text-gray-700 dark:text-gray-300">
-                            Spent <span className="font-semibold text-primary">{formatCurrency(latestSpent)}</span> this month.
-                          </p>
-                          {topCategoryEntry && (
-                            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 pt-1 border-t border-gray-200/50 dark:border-gray-800">
-                              <span>Top category:</span>
-                              <div className="flex items-center gap-1.5 font-medium">
-                                <CategoryPill category={topCategoryEntry[0]} />
-                                <span className="font-bold">({formatCurrency(topCategoryEntry[1])})</span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        {biggestExpense && (
-                          <div className="flex items-center gap-2.5 text-xs text-gray-500 dark:text-gray-400 bg-rose-500/5 p-2.5 rounded-xl border border-rose-500/10">
-                            <ShieldAlert size={16} className="text-rose-500 shrink-0" />
-                            <span className="truncate">
-                              Largest: <strong className="text-gray-700 dark:text-gray-200">{formatCurrency(biggestExpense.amount)}</strong>{' '}
-                              {biggestExpense.merchant && biggestExpense.merchant !== 'Unknown'
-                                ? `at ${biggestExpense.merchant}`
-                                : biggestExpense.description
-                                  ? `· ${biggestExpense.description}`
-                                  : ''}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Upload a statement with expenses to unlock personalized analytics.</p>
+                    {latestMonth && (
+                      <span className="px-2.5 py-1 rounded-full bg-gray-100 dark:bg-[#1a2333] border border-gray-200 dark:border-gray-800 text-xs font-semibold text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                        {latestMonth}
+                      </span>
                     )}
                   </div>
+
+                  {latestMonth && latestEffectiveExpenses.length > 0 ? (
+                    <div className="flex-1 flex flex-col justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">Spent this month</p>
+                        <p className="text-3xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums mt-0.5">
+                          {formatCurrency(latestSpent)}
+                        </p>
+                      </div>
+
+                      {topCategoryEntry && (
+                        <div className="flex items-center justify-between gap-2 flex-wrap p-3 rounded-xl bg-gray-50 dark:bg-[#182438] border border-gray-100 dark:border-gray-800">
+                          <span className="text-xs text-gray-500 dark:text-gray-400">Top category</span>
+                          <div className="flex items-center gap-2">
+                            <CategoryPill category={topCategoryEntry[0]} />
+                            <span className="text-xs font-bold text-gray-800 dark:text-gray-100 tabular-nums">{formatCurrency(topCategoryEntry[1])}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#182438] border border-gray-100 dark:border-gray-800">
+                          <p className="text-xs text-gray-500 dark:text-gray-400">Income this month</p>
+                          <p className="text-sm font-bold text-gray-900 dark:text-white tabular-nums mt-0.5">{formatCurrency(latestIncome)}</p>
+                        </div>
+                        <div className="p-3 rounded-xl bg-gray-50 dark:bg-[#182438] border border-gray-100 dark:border-gray-800">
+                          <p className="text-xs text-gray-500 dark:text-gray-400">Transactions</p>
+                          <p className="text-sm font-bold text-gray-900 dark:text-white tabular-nums mt-0.5">{latestMonthTx.length}</p>
+                        </div>
+                      </div>
+
+                      {biggestExpense && (
+                        <div className="mt-auto flex items-center gap-2.5 p-3 rounded-xl bg-rose-500/5 border border-rose-500/10">
+                          <ShieldAlert size={16} className="text-rose-500 shrink-0" />
+                          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                            Largest: <strong className="text-gray-800 dark:text-gray-100 tabular-nums">{formatCurrency(biggestExpense.amount)}</strong>{' '}
+                            {biggestExpense.merchant && biggestExpense.merchant !== 'Unknown'
+                              ? `at ${biggestExpense.merchant}`
+                              : biggestExpense.description
+                                ? `· ${biggestExpense.description}`
+                                : ''}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Upload a statement with expenses to unlock personalized analytics.</p>
+                  )}
                 </div>
               </section>
 
@@ -890,13 +996,13 @@ function Dashboard() {
               )}
 
               <section id="forecast" className="animate-rise scroll-mt-24">
-                <MonthlyForecastWidget />
+                <MonthlyForecastWidget key={dataVersion} />
               </section>
 
               <section id="insights" className="animate-rise bg-card rounded-2xl shadow-sm p-6 border border-gray-200 dark:border-gray-700 scroll-mt-24">
                 <SpendingInsights
                   transactions={effectiveTransactions}
-                  refreshKey={budgetRefreshKey + goalsVersion}
+                  refreshKey={budgetRefreshKey + goalsVersion + dataVersion}
                 />
               </section>
 
@@ -920,7 +1026,7 @@ function Dashboard() {
 
               <section id="goals" className="animate-rise bg-white dark:bg-[#131c2e] rounded-2xl shadow-sm p-6 border border-gray-200/80 dark:border-gray-800/80 scroll-mt-24">
                 <SavingsGoals
-                  refreshKey={transactions.length}
+                  refreshKey={`${transactions.length}-${dataVersion}`}
                   onTotalSavedChange={setGoalsTotalSaved}
                   onGoalsChange={() => setGoalsVersion((k) => k + 1)}
                 />
@@ -1159,6 +1265,7 @@ function Dashboard() {
         <EditTransactionModal
           transaction={editingTransaction}
           onSave={handleSaveEdit}
+          onApplied={handleAppliedToSimilar}
           onClose={() => setEditingTransaction(null)}
         />
       )}

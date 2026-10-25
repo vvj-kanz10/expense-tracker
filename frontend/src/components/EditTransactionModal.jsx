@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import { getSimilarTransactions, applyToSimilar } from '../api/transactions';
 
 // Same fixed category list GeminiCategorizationService uses, so the
 // dropdown never lets a user pick something the AI wouldn't also produce.
@@ -17,17 +18,40 @@ const CATEGORIES = [
   'Other/People',
 ];
 
-function EditTransactionModal({ transaction, onClose, onSave }) {
+const PREVIEW_LIMIT = 5;
+
+function EditTransactionModal({ transaction, onClose, onSave, onApplied }) {
   const [category, setCategory] = useState(transaction.category || 'Other/People');
   const [merchant, setMerchant] = useState(transaction.merchant || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  // null = normal edit view, array = showing the "apply to similar?" popup
+  const [similar, setSimilar] = useState(null);
+  const [applying, setApplying] = useState(false);
 
   const handleSave = async () => {
     setSaving(true);
     setError(null);
     try {
       await onSave(transaction.id, { category, merchant });
+
+      // Only ask about similar rows if the user actually changed category or merchant
+      const changed =
+        category !== (transaction.category || 'Other/People') ||
+        merchant !== (transaction.merchant || '');
+
+      if (changed) {
+        try {
+          const list = await getSimilarTransactions(transaction.id);
+          if (list.length > 0) {
+            setSimilar(list);
+            return; // stay open and show the popup
+          }
+        } catch {
+          // The save already worked, so if this lookup fails just close normally
+        }
+      }
       onClose();
     } catch (err) {
       setError(err.message || 'Failed to save changes.');
@@ -36,6 +60,75 @@ function EditTransactionModal({ transaction, onClose, onSave }) {
     }
   };
 
+  const handleApply = async () => {
+    setApplying(true);
+    setError(null);
+    try {
+      await applyToSimilar(transaction.id);
+      onApplied?.(); // lets the page reload its list
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Failed to update similar transactions.');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  // ---------- Popup view: "apply to similar?" ----------
+  if (similar) {
+    const shown = similar.slice(0, PREVIEW_LIMIT);
+    const extra = similar.length - shown.length;
+    const label = merchant ? `${category} / ${merchant}` : category;
+
+    return (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+        <div className="bg-card rounded-xl shadow-lg w-full max-w-sm p-6">
+          <h3 className="text-lg font-semibold text-text mb-2">Apply to similar?</h3>
+          <p className="text-sm text-text mb-4">
+            Apply <span className="font-semibold">{label}</span> to{' '}
+            {similar.length} other similar transaction{similar.length > 1 ? 's' : ''}?
+          </p>
+
+          <ul className="mb-4 space-y-2">
+            {shown.map((t) => (
+              <li key={t.id} className="text-sm text-gray-400 flex justify-between gap-3">
+                <span className="truncate">{t.description}</span>
+                <span className="shrink-0">₹{t.amount}</span>
+              </li>
+            ))}
+            {extra > 0 && (
+              <li className="text-sm text-gray-400">+ {extra} more</li>
+            )}
+          </ul>
+
+          <p className="text-xs text-gray-400 mb-4">
+            Only category and merchant change. Amount and date stay the same.
+          </p>
+
+          {error && <p className="text-danger text-sm mb-3">{error}</p>}
+
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={onClose}
+              disabled={applying}
+              className="px-4 py-2 rounded-lg text-sm text-text hover:bg-bg transition"
+            >
+              No
+            </button>
+            <button
+              onClick={handleApply}
+              disabled={applying}
+              className="px-4 py-2 rounded-lg text-sm bg-primary text-white hover:opacity-90 transition disabled:opacity-50"
+            >
+              {applying ? 'Applying...' : 'Yes, apply'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- Normal edit view ----------
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
       <div className="bg-card rounded-xl shadow-lg w-full max-w-sm p-6">

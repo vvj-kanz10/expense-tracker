@@ -40,3 +40,13 @@ export const deleteTransaction = async (id) => {
   const response = await axiosInstance.delete(`/transactions/${id}`);
   return response.data;
 };
+
+export const getSimilarTransactions = async (id) => {
+  const response = await axiosInstance.get(`/transactions/${id}/similar`);
+  return response.data;
+};
+
+export const applyToSimilar = async (id) => {
+  const response = await axiosInstance.post(`/transactions/${id}/apply-to-similar`);
+  return response.data;
+};

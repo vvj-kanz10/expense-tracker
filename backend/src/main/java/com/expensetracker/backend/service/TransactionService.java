@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.expensetracker.backend.statement.GeminiCategorizationService;
 import com.expensetracker.backend.statement.DefaultCategoryRules;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -147,6 +148,63 @@ public class TransactionService {
 
         cashSplitRepository.deleteByTransactionId(transactionId);
         transactionRepository.delete(transaction);
+    }
+
+    // Finds the user's OTHER transactions that the saved rule would match
+    // (same normalized description) but that don't already have this category + merchant.
+    // Used for the "apply to similar transactions?" popup.
+    public List<TransactionResponse> findSimilarTransactions(String username, Long transactionId) {
+        return findSimilar(username, transactionId)
+                .stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
+
+    // Copies the edited transaction's category + merchant onto the similar ones.
+    // Amount, date, type and description are never touched. Returns how many were updated.
+    @Transactional
+    public int applyToSimilar(String username, Long transactionId) {
+        Transaction source = getOwnedTransaction(username, transactionId);
+        List<Transaction> similar = findSimilar(username, transactionId);
+
+        for (Transaction t : similar) {
+            t.setCategory(source.getCategory());
+            t.setMerchant(source.getMerchant());
+        }
+        transactionRepository.saveAll(similar);
+        return similar.size();
+    }
+
+    // Loads a transaction and checks it belongs to the logged-in user
+    private Transaction getOwnedTransaction(String username, Long transactionId) {
+        User user = getUserByUsername(username);
+
+        Transaction transaction = transactionRepository.findById(transactionId)
+                .orElseThrow(() -> new RuntimeException("Transaction not found"));
+
+        if (!transaction.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("You are not allowed to access this transaction");
+        }
+        return transaction;
+    }
+
+    // Shared by both endpoints: same user, same normalized description (the exact
+    // match CategoryRuleService uses), not the edited row itself, and not already
+    // carrying the new category + merchant.
+    private List<Transaction> findSimilar(String username, Long transactionId) {
+        Transaction source = getOwnedTransaction(username, transactionId);
+
+        String matchText = CategoryRuleService.normalize(source.getDescription());
+        if (matchText.isEmpty()) {
+            return List.of();
+        }
+
+        return transactionRepository.findByUserId(source.getUser().getId()).stream()
+                .filter(t -> !t.getId().equals(source.getId()))
+                .filter(t -> matchText.equals(CategoryRuleService.normalize(t.getDescription())))
+                .filter(t -> !Objects.equals(t.getCategory(), source.getCategory())
+                        || !Objects.equals(t.getMerchant(), source.getMerchant()))
+                .collect(Collectors.toList());
     }
 
     // Takes the raw parsed rows from PDF/CSV parsing, skips any that are already in the
